@@ -201,26 +201,48 @@ python sensitivity_analysis.py
 - `sensitivity_results/sensitivity_best_params.csv` (最佳參數建議)
 - `sensitivity_results/sensitivity_heatmap_{TICKER}.png`
 
+### 5. 市場濾網回測 (120MA + DC20)
+
+```bash
+# 預設期間
+python backtest_market_filter.py
+
+# 自訂期間
+python backtest_market_filter.py --start 2017-10-16 --end 2025-12-31
+
+# 指定股票
+python backtest_market_filter.py --tickers NVDA TSLA
+```
+
+市場濾網邏輯：
+- **多頭市場**: Nasdaq > 120MA → 准許買入
+- **逆勢突破**: Nasdaq ≤ 120MA 且 個股 > DC20_High → 准許買入
+- **其餘情況**: 保持空手
+
+輸出目錄依日期範圍命名：`backtest_results_filtered_{START}_{END}/`
+
 ---
 
 ## 回測績效參考
 
-**深度回測結果 (2017-10-16 ~ 2023-10-15)：**
+### 無濾網版本 (2017-10-16 ~ 2023-10-15)
 
-| Ticker | 總報酬 | CAGR | Sharpe | MDD | 交易次數 |
-|--------|--------|------|--------|-----|----------|
-| TSLA | 549.4% | 36.6% | 0.80 | -76.6% | 57 |
-| NVDA | 382.7% | 30.0% | 0.76 | -67.7% | 42 |
-| ^IXIC B&H | 102.4% | 12.5% | 0.52 | -36.4% | - |
+| Ticker | 總報酬 | CAGR | Sharpe | MDD |
+|--------|--------|------|--------|-----|
+| TSLA | 725.2% | 42.2% | 0.87 | -74.9% |
+| NVDA | 421.1% | 31.7% | 0.79 | -66.7% |
+| ^IXIC B&H | 102.4% | 12.5% | 0.52 | -36.4% |
 
-**最佳參數建議 (敏感度分析)：**
+### 市場濾網版本 (120MA + DC20)
 
-| Ticker | Hard Stop | Callback Base | Callback High | Sharpe |
-|--------|-----------|---------------|---------------|--------|
-| TSLA | -8% | 8% | 9% | 0.87 |
-| NVDA | -8% | 8% | 7% | 0.81 |
-| PLTR | -6% | 6% | 9% | 0.66 |
-| NFLX | -3% | 8% | 9% | 0.46 |
+| Ticker | 總報酬 | Sharpe | MDD | MDD 改善 |
+|--------|--------|--------|-----|---------|
+| **TSLA** | **1242.5%** | **1.12** | **-40.2%** | **+34.7%** |
+| **NVDA** | **568.5%** | **0.99** | **-40.8%** | **+25.9%** |
+| NFLX | 49.9% | 0.31 | **-37.5%** | **+34.2%** |
+| PLTR | -11.4% | 0.09 | -69.1% | -1.0% |
+
+> ✅ **關鍵發現**: 市場濾網成功將 TSLA/NVDA/NFLX 的 MDD 從 -65%~-75% 降至 -40% 以下，同時提升報酬率與 Sharpe
 
 ---
 
@@ -239,11 +261,13 @@ ptrl-v02/
 ├── train_us_tech_buy_agent.py      # 主訓練腳本
 ├── test_buy_agent_performance.py   # 決策表現評估
 ├── test_confidence_calibration.py  # 信心度分層分析
-├── backtest_dynamic_trailing.py    # 深度回測
+├── backtest_dynamic_trailing.py    # 深度回測 (無濾網)
+├── backtest_market_filter.py       # 市場濾網回測 ⭐
 ├── sensitivity_analysis.py         # 參數敏感度分析
 ├── models_v5/                      # 模型儲存
 ├── test_results/                   # 評估結果
 ├── backtest_results/               # 回測結果
+├── backtest_results_filtered_*/    # 濾網回測結果 (依日期)
 ├── sensitivity_results/            # 敏感度分析結果
 └── data/stocks/                    # 股票數據 CSV
 ```
