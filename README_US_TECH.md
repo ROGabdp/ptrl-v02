@@ -246,6 +246,80 @@ python backtest_market_filter.py --tickers NVDA TSLA
 
 ---
 
+## NVDA 專屬跟單系統
+
+### 1. NVDA 跟單回測腳本
+
+```bash
+# 執行回測
+python backtest_nvda_follow.py --start 2020-01-01 --end 2023-12-31
+
+# 只指定起始日（結束日自動設為今天）
+python backtest_nvda_follow.py --start 2025-12-09
+```
+
+#### 核心特色
+
+| 功能 | 說明 |
+|------|------|
+| **年度資金注入** | 起始日注入 $2,400，每年第一個交易日再注入 $2,400 |
+| **信心度分級買入** | >95%: 25%, 90-95%: 15%, <90%: 不買 |
+| **市場濾網** | Nasdaq > 120MA 或 個股 > DC20 突破 |
+| **資金回流** | 賣出後資金回到資金池 |
+| **Nasdaq B&H 比較** | 同等資金注入的基準對比 |
+
+#### 輸出檔案
+
+```
+backtest_results_nvda/{start}_{end}/
+├── end_date_summary_NVDA_{start}_{end}.txt  # 跟單總結（含明日操作建議）
+├── equity_curve_nvda_follow.png             # 淨值曲線圖
+└── trade_log_NVDA_{start}_{end}.csv         # 交易紀錄
+```
+
+### 2. 風險管理參數網格搜尋
+
+```bash
+python grid_search_nvda_params.py
+```
+
+#### 最終優化參數（經 4 輪測試）
+
+```python
+HARD_STOP_PCT = -0.08          # 硬性停損 -8%
+TRAILING_ACTIVATION = 0.20     # 移動停利啟動 +20%
+HIGH_PROFIT_THR = 0.25         # 高利潤門檻 25%
+CALLBACK_BASE = 0.08           # 基礎回檔停利 8%
+CALLBACK_HIGH = 0.17           # 高利潤回檔停利 17% ⭐
+```
+
+#### 優化績效（2017-10-16 ~ 2023-10-15）
+
+| 策略 | Return | Sharpe | MDD | 特點 |
+|------|--------|--------|-----|------|
+| **最優 (CB=17%)** | **+544.9%** | **1.27** | **-31.6%** | 最佳平衡 ⭐ |
+| 保守 (CB=7%) | +404% | 1.22 | -32.1% | 穩健，高勝率 65% |
+| 激進 (CB=75%) | +649% | 1.25 | -63.6% | 高報酬高風險 ⚠️ |
+
+#### 網格搜尋輸出
+
+```
+grid_search_results_nvda/
+├── grid_search_results.csv        # 完整結果表
+├── parameter_heatmaps.png         # 參數熱力圖
+├── parameter_impact.png           # 單參數影響分析
+└── performance_scatter.png        # 績效散點圖
+```
+
+#### 關鍵發現
+
+1. **CALLBACK_HIGH = 17%** 是報酬與風險的完美平衡點
+2. **12-15%** 是效率谷底，應避開
+3. **HARD_STOP = -8% 到 -10%** 較寬的停損讓 NVDA 有更多波動空間
+4. **TRAILING_ACTIVATION = 20%** 讓利潤充分發展再啟動保護
+
+---
+
 ## 例外處理
 
 - **股票尚未上市**：自動過濾無效訓練區間，僅使用有效數據
@@ -262,12 +336,16 @@ ptrl-v02/
 ├── test_buy_agent_performance.py   # 決策表現評估
 ├── test_confidence_calibration.py  # 信心度分層分析
 ├── backtest_dynamic_trailing.py    # 深度回測 (無濾網)
-├── backtest_market_filter.py       # 市場濾網回測 ⭐
+├── backtest_market_filter.py       # 市場濾網回測
+├── backtest_nvda_follow.py         # NVDA 專屬跟單回測 ⭐
+├── grid_search_nvda_params.py      # NVDA 參數網格搜索 ⭐
 ├── sensitivity_analysis.py         # 參數敏感度分析
 ├── models_v5/                      # 模型儲存
 ├── test_results/                   # 評估結果
 ├── backtest_results/               # 回測結果
 ├── backtest_results_filtered_*/    # 濾網回測結果 (依日期)
+├── backtest_results_nvda/          # NVDA 跟單回測結果 ⭐
+├── grid_search_results_nvda/       # 網格搜索結果 ⭐
 ├── sensitivity_results/            # 敏感度分析結果
 └── data/stocks/                    # 股票數據 CSV
 ```
