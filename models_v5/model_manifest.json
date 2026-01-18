@@ -1,0 +1,77 @@
+{
+  "version": "v5_us_tech",
+  "base_model": "ppo_buy_base_us_tech.zip",
+  "created_at": "2026-01-18T14:03:59.275076",
+  "tickers": {
+    "NVDA": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\NVDA\\ppo_buy_NVDA_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.522,
+      "actual_training_days": 4791,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "MSFT": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\MSFT\\ppo_buy_MSFT_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.179,
+      "actual_training_days": 4791,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "AAPL": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\AAPL\\ppo_buy_AAPL_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.304,
+      "actual_training_days": 4791,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "AMZN": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\AMZN\\ppo_buy_AMZN_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.288,
+      "actual_training_days": 4791,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "META": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\META\\ppo_buy_META_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.304,
+      "actual_training_days": 1677,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "AVGO": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\AVGO\\ppo_buy_AVGO_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.287,
+      "actual_training_days": 2379,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "GOOGL": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\GOOGL\\ppo_buy_GOOGL_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.217,
+      "actual_training_days": 3629,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "TSLA": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\TSLA\\ppo_buy_TSLA_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.521,
+      "actual_training_days": 2154,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "NFLX": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\NFLX\\ppo_buy_NFLX_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.405,
+      "actual_training_days": 4193,
+      "base_model_version": "ppo_buy_base_us_tech"
+    },
+    "PLTR": {
+      "model_path": "D:\\000-github-repositories\\ptrl-v02\\models_v5\\finetuned\\PLTR\\ppo_buy_PLTR_final.zip",
+      "train_end_date": "2025-12-31",
+      "val_win_rate": 0.582,
+      "actual_training_days": 555,
+      "base_model_version": "ppo_buy_base_us_tech"
+    }
+  }
+}

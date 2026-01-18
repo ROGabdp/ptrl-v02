@@ -1,0 +1,21 @@
+# Core ML/RL
+stable-baselines3>=2.0.0
+gymnasium>=0.29.0
+torch>=2.0.0
+
+# Data & Finance
+pandas>=2.0.0
+numpy>=1.24.0
+yfinance>=0.2.30
+
+# Technical Analysis
+ta>=0.10.0
+
+# Visualization & Monitoring
+matplotlib>=3.7.0
+tensorboard>=2.14.0
+tqdm>=4.65.0
+
+# Optional: Development
+# pytest>=7.0.0
+# black>=23.0.0
