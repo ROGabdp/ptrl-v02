@@ -146,11 +146,107 @@ models_v5/
 
 ---
 
+## 評估與分析工具
+
+### 1. 決策表現評估
+
+```bash
+python test_buy_agent_performance.py
+```
+
+評估 Agent 的 Precision 與 Recall，輸出：
+- `test_results/test_results_summary.csv`
+- `test_results/test_results_chart.png`
+
+### 2. 信心度分層分析
+
+```bash
+python test_confidence_calibration.py
+```
+
+分析不同信心度區間 (50-60%, 60-70%, ..., 90-100%) 的決策成功率，輸出：
+- `test_results/confidence_calibration_analysis.csv`
+- `test_results/confidence_calibration_chart.png`
+
+### 3. 深度回測 (動態停利)
+
+```bash
+python backtest_dynamic_trailing.py
+```
+
+針對 PLTR, NVDA, TSLA, NFLX 執行回測，包含：
+- 信心度門檻: > 90%
+- 硬性停損: -8%
+- 移動停利啟動: +15%
+- 動態回檔停利: 一般區 8% / 高獲利區 11%
+
+輸出：
+- `backtest_results/final_backtest_report.csv`
+- `backtest_results/equity_curves.png`
+- `backtest_results/trade_signals_{TICKER}.png`
+
+### 4. 參數敏感度分析
+
+```bash
+python sensitivity_analysis.py
+```
+
+網格搜尋 75 組參數組合 (5×5×3)：
+- Hard Stop: -3%, -4%, -5%, -6%, -8%
+- Callback Base: 3%, 4%, 5%, 6%, 8%
+- Callback High: 7%, 9%, 11%
+
+輸出：
+- `sensitivity_results/sensitivity_analysis_results.csv` (300 組結果)
+- `sensitivity_results/sensitivity_best_params.csv` (最佳參數建議)
+- `sensitivity_results/sensitivity_heatmap_{TICKER}.png`
+
+---
+
+## 回測績效參考
+
+**深度回測結果 (2017-10-16 ~ 2023-10-15)：**
+
+| Ticker | 總報酬 | CAGR | Sharpe | MDD | 交易次數 |
+|--------|--------|------|--------|-----|----------|
+| TSLA | 549.4% | 36.6% | 0.80 | -76.6% | 57 |
+| NVDA | 382.7% | 30.0% | 0.76 | -67.7% | 42 |
+| ^IXIC B&H | 102.4% | 12.5% | 0.52 | -36.4% | - |
+
+**最佳參數建議 (敏感度分析)：**
+
+| Ticker | Hard Stop | Callback Base | Callback High | Sharpe |
+|--------|-----------|---------------|---------------|--------|
+| TSLA | -8% | 8% | 9% | 0.87 |
+| NVDA | -8% | 8% | 7% | 0.81 |
+| PLTR | -6% | 6% | 9% | 0.66 |
+| NFLX | -3% | 8% | 9% | 0.46 |
+
+---
+
 ## 例外處理
 
 - **股票尚未上市**：自動過濾無效訓練區間，僅使用有效數據
 - **暖機期不足**：確保 MA240 等指標計算正確 (前 250 天)
 - **NaN 值**：特徵計算後自動移除含 NaN 的資料列
+
+---
+
+## 檔案結構
+
+```
+ptrl-v02/
+├── train_us_tech_buy_agent.py      # 主訓練腳本
+├── test_buy_agent_performance.py   # 決策表現評估
+├── test_confidence_calibration.py  # 信心度分層分析
+├── backtest_dynamic_trailing.py    # 深度回測
+├── sensitivity_analysis.py         # 參數敏感度分析
+├── models_v5/                      # 模型儲存
+├── test_results/                   # 評估結果
+├── backtest_results/               # 回測結果
+├── sensitivity_results/            # 敏感度分析結果
+└── data/stocks/                    # 股票數據 CSV
+```
 
 ---
 
