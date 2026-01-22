@@ -300,12 +300,21 @@ def calculate_features(df_in: pd.DataFrame, benchmark_df: pd.DataFrame,
     cache_path = os.path.join(CACHE_DIR, f"{ticker.replace('^', '_').replace('.', '_')}_features_ustech.pkl")
     
     if use_cache and os.path.exists(cache_path):
-        print(f"  [Cache] Loading features for {ticker}...")
         try:
             with open(cache_path, 'rb') as f:
-                return pickle.load(f)
-        except:
-            pass
+                cached_df = pickle.load(f)
+            
+            # 檢查快取是否涵蓋輸入數據的日期範圍
+            input_last_date = df_in.index.max()
+            cached_last_date = cached_df.index.max()
+            
+            if cached_last_date >= input_last_date:
+                print(f"  [Cache] Loading features for {ticker} (up to {cached_last_date.strftime('%Y-%m-%d')})...")
+                return cached_df
+            else:
+                print(f"  [Cache] Invalidating stale cache for {ticker}: {cached_last_date.strftime('%Y-%m-%d')} < {input_last_date.strftime('%Y-%m-%d')}")
+        except Exception as e:
+            print(f"  [Cache] Error loading cache for {ticker}: {e}")
     
     print(f"  [Compute] Generating features for {ticker}...")
     df = df_in.copy()

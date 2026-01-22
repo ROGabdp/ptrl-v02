@@ -328,6 +328,30 @@ grid_search_results_nvda/
 
 ---
 
+## 快取機制
+
+### 特徵快取自動失效 (2026-01-22)
+
+`calculate_features` 函數會將計算好的特徵資料快取至 `data/processed/{TICKER}_features_ustech.pkl`。
+
+**自動失效邏輯**：
+- 載入快取時，比較**快取資料的最後日期**與**輸入資料的最後日期**
+- 如果快取資料較舊，自動失效並重新計算特徵
+
+```
+[Cache] Loading features for NVDA (up to 2026-01-21)...     # 使用有效快取
+[Cache] Invalidating stale cache for NVDA: 2026-01-16 < 2026-01-21  # 快取過期
+[Compute] Generating features for NVDA...                    # 重新計算
+```
+
+**受益腳本**（所有導入 `calculate_features` 的腳本）：
+- `backtest_nvda_follow.py`
+- `backtest_market_filter.py`
+- `backtest_dynamic_trailing.py`
+- `sensitivity_analysis.py`
+- `test_buy_agent_performance.py`
+- `test_confidence_calibration.py`
+
 ## 檔案結構
 
 ```
