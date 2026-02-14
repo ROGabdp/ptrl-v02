@@ -116,10 +116,10 @@ def prepare_market_filter(benchmark_df: pd.DataFrame, ticker_df: pd.DataFrame) -
     # 合併 Nasdaq 指標到個股資料
     nasdaq_cols = ['Nasdaq_120MA', 'Nasdaq_Above_120MA']
     for col in nasdaq_cols:
-        ticker_df[col] = benchmark_df[col].reindex(ticker_df.index).fillna(method='ffill')
+        ticker_df[col] = benchmark_df[col].reindex(ticker_df.index).ffill()
     
     # 添加 Nasdaq Close
-    ticker_df['Nasdaq_Close'] = benchmark_df['Close'].reindex(ticker_df.index).fillna(method='ffill')
+    ticker_df['Nasdaq_Close'] = benchmark_df['Close'].reindex(ticker_df.index).ffill()
     
     return ticker_df
 

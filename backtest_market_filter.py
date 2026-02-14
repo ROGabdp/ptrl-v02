@@ -127,7 +127,7 @@ def prepare_market_filter(benchmark_df: pd.DataFrame, ticker_df: pd.DataFrame) -
     # 合併 Nasdaq 指標到個股資料
     nasdaq_cols = ['Nasdaq_120MA', 'Nasdaq_Above_120MA']
     for col in nasdaq_cols:
-        ticker_df[col] = benchmark_df[col].reindex(ticker_df.index).fillna(method='ffill')
+        ticker_df[col] = benchmark_df[col].reindex(ticker_df.index).ffill()
     
     return ticker_df
 
@@ -514,7 +514,7 @@ def plot_trade_signals_filtered(ticker: str, features_df: pd.DataFrame,
     
     # 子圖 2: Nasdaq 120MA 狀態
     ax2 = axes[1]
-    nasdaq_close = benchmark_df['Close'].reindex(test_df.index).fillna(method='ffill')
+    nasdaq_close = benchmark_df['Close'].reindex(test_df.index).ffill()
     nasdaq_ma = test_df['Nasdaq_120MA']
     
     ax2.plot(test_df.index, nasdaq_close, label='Nasdaq', color='purple', linewidth=1)

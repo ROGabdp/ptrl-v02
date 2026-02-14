@@ -68,9 +68,16 @@ Buy Agent 預測：**未來 20 交易日內，最高價報酬率是否達到 +10
 
 ### 1. 安裝依賴
 
-```bash
-pip install stable-baselines3 gymnasium yfinance ta pandas numpy tqdm
-```
+# 建立虛擬環境 (Windows)
+python -m venv .venv
+.venv\Scripts\activate
+
+# 建立虛擬環境 (Mac/Linux)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 安裝依賴
+pip install -r requirements.txt
 
 ### 2. 執行訓練
 
@@ -351,6 +358,20 @@ grid_search_results_nvda/
 - `sensitivity_analysis.py`
 - `test_buy_agent_performance.py`
 - `test_confidence_calibration.py`
+
+## Pandas 兼容性修復 (2026-01-30)
+
+解決在 Pandas 2.0+ 版本中出現的 `TypeError: NDFrame.fillna() got an unexpected keyword argument 'method'` 錯誤。
+
+**修復內容**：
+- 將 `fillna(method='ffill')` 替換為 `ffill()`
+- 將 `fillna(method='bfill')` 替換為 `bfill()`
+
+**受影響並已修復的腳本**：
+- `backtest_nvda_follow.py`
+- `backtest_market_filter.py`
+- `backtest_dynamic_trailing.py`
+- `train_us_tech_buy_agent.py`
 
 ## 檔案結構
 

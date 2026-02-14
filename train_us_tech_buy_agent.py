@@ -252,7 +252,7 @@ def calculate_heikin_ashi(df: pd.DataFrame) -> pd.DataFrame:
 def calculate_supertrend(df: pd.DataFrame, length: int = 14, multiplier: float = 3.0) -> pd.DataFrame:
     """計算 SuperTrend 指標"""
     atr = AverageTrueRange(df['High'], df['Low'], df['Close'], window=length).average_true_range()
-    atr = atr.fillna(method='bfill')
+    atr = atr.bfill()
     hl2 = (df['High'] + df['Low']) / 2
     basic_upper = hl2 + multiplier * atr
     basic_lower = hl2 - multiplier * atr
@@ -322,9 +322,9 @@ def calculate_features(df_in: pd.DataFrame, benchmark_df: pd.DataFrame,
     # =========================================================================
     # 基礎技術指標
     # =========================================================================
-    df['DC_Upper'] = df['High'].rolling(20).max().shift(1).fillna(method='bfill')
-    df['DC_Lower'] = df['Low'].rolling(20).min().shift(1).fillna(method='bfill')
-    df['DC_Upper_10'] = df['High'].rolling(10).max().shift(1).fillna(method='bfill')
+    df['DC_Upper'] = df['High'].rolling(20).max().shift(1).bfill()
+    df['DC_Lower'] = df['Low'].rolling(20).min().shift(1).bfill()
+    df['DC_Upper_10'] = df['High'].rolling(10).max().shift(1).bfill()
     
     # ATR (多週期)
     df['ATR'] = AverageTrueRange(df['High'], df['Low'], df['Close'], window=10).average_true_range()
@@ -348,7 +348,7 @@ def calculate_features(df_in: pd.DataFrame, benchmark_df: pd.DataFrame,
     # =========================================================================
     # 正規化 (使用 Donchian Channel 作為分母)
     # =========================================================================
-    base_price = df['DC_Upper'].replace(0, np.nan).fillna(method='bfill')
+    base_price = df['DC_Upper'].replace(0, np.nan).bfill()
     
     for col in ['Close', 'Open', 'High', 'Low', 'DC_Lower', 
                 'HA_Open', 'HA_High', 'HA_Low', 'HA_Close', 
@@ -426,7 +426,7 @@ def calculate_features(df_in: pd.DataFrame, benchmark_df: pd.DataFrame,
     # 相對強度 (使用 ^IXIC 作為基準)
     # =========================================================================
     if benchmark_df is not None:
-        bench_close = benchmark_df['Close'].reindex(df.index).fillna(method='ffill')
+        bench_close = benchmark_df['Close'].reindex(df.index).ffill()
         df['RS_Raw'] = df['Close'] / bench_close
         rs_min = df['RS_Raw'].rolling(250).min()
         rs_max = df['RS_Raw'].rolling(250).max()
