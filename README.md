@@ -287,6 +287,33 @@ python scripts/eval_ppo_classifier.py --model-path models_v5/ppo_buy_base_us_tec
 
 ---
 
+## 日常買點輔助推論小工具
+
+如果您已經有訓練好的 `.joblib` (Sklearn) 或是 `.zip` (PPO) 檔案，可以直接透過 `scripts/predict_today.py` 每日執行，腳本會自動抓取最新的 YF 收盤數據、轉換特徵，並產出一份當日買點判定清單。
+
+```bash
+# 讓 HGB 模型判斷預設 10 檔股票的最新買點
+python scripts/predict_today.py --model-path output_sklearn/run_hgb_123/model.joblib
+
+# 載入各自的 PPO 微調模型，預測指定 3 檔最新買點
+python scripts/predict_today.py --model-path "models_v5/finetuned/{ticker}/best/best_model.zip" --tickers NVDA MSFT TSLA
+```
+
+**輸出範例**:
+```
+📊 今日推論結果 (Prediction for Latest Close)
+-----------------------------------------------------------------
+Ticker   | Latest Date  | P(Buy) %     | Decision
+-----------------------------------------------------------------
+NVDA     | 2026-02-20   |  20.72%      | WAIT ⚪
+MSFT     | 2026-02-20   |  11.31%      | WAIT ⚪
+TSLA     | 2026-02-20   |  58.91%      | BUY 🟢
+-----------------------------------------------------------------
+🎯 總計符合買進門檻 (0.5): 1 檔
+```
+
+---
+
 ## 回測績效參考
 
 ### 無濾網版本 (2017-10-16 ~ 2023-10-15)
@@ -446,7 +473,8 @@ ptrl-v02/
 ├── sensitivity_analysis.py         # 參數敏感度分析
 ├── scripts/                        # 獨立分析與訓練工具
 │   ├── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
-│   └── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
+│   ├── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
+│   └── predict_today.py            # 日常買點預測推論工具
 ├── models_v5/                      # 模型儲存
 ├── output_sklearn/                 # sklearn 訓練結果輸出
 ├── output_eval_ppo/                # PPO 離線推論評估輸出
