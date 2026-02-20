@@ -297,7 +297,7 @@ def calculate_features(df_in: pd.DataFrame, benchmark_df: pd.DataFrame,
         pd.DataFrame: 包含所有特徵的 DataFrame
     """
     os.makedirs(CACHE_DIR, exist_ok=True)
-    cache_path = os.path.join(CACHE_DIR, f"{ticker.replace('^', '_').replace('.', '_')}_features_ustech.pkl")
+    cache_path = os.path.join(CACHE_DIR, f"{ticker.replace('^', '_').replace('.', '_')}_features_ustech_v3.pkl")
     
     if use_cache and os.path.exists(cache_path):
         try:
@@ -440,12 +440,12 @@ def calculate_features(df_in: pd.DataFrame, benchmark_df: pd.DataFrame,
             df[f'RS_ROC_{period}'] = 0.0
     
     # =========================================================================
-    # 目標標籤 (20 天最高價報酬率)
+    # 目標標籤 (多週期預測：未來 X 交易日內的最高價報酬率)
     # =========================================================================
     df['Signal_Buy_Filter'] = df['High'] > df['DC_Upper_10']
     
-    # Next_20d_Max: 未來 20 交易日內的最高價報酬率
-    df['Next_20d_Max'] = df['High'].shift(-1).iloc[::-1].rolling(20, min_periods=20).max().iloc[::-1] / df['Close'] - 1
+    for days in [20, 60, 120]:
+        df[f'Next_{days}d_Max'] = df['High'].shift(-1).iloc[::-1].rolling(days, min_periods=days).max().iloc[::-1] / df['Close'] - 1
     
     # =========================================================================
     # 移除 NaN

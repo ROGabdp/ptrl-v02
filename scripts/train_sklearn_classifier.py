@@ -56,6 +56,8 @@ def parse_args():
     # 訓練參數
     parser.add_argument("--model", choices=["rf", "adaboost", "hgb"], default="rf",
                         help="選擇訓練模型種類")
+    parser.add_argument("--target-days", type=int, default=20, help="預測未來的交易天數 (e.g. 20, 60, 120)")
+    parser.add_argument("--target-return", type=float, default=0.10, help="目標最高價漲幅門檻 (e.g. 0.10, 0.20)")
     parser.add_argument("--balance-train", choices=["none", "undersample_50_50", "class_weight_balanced"], 
                         default="none", help="類別不平衡處理方式 (僅作用於訓練集)")
     parser.add_argument("--seed", type=int, default=42, help="隨機種子")
@@ -93,11 +95,12 @@ def prepare_data(args, train_ranges, val_range):
         raise ValueError(f"無法載入 benchmark {BENCHMARK} 的資料。")
         
     use_cache = not args.no_cache
+    target_col = f"Next_{args.target_days}d_Max"
     
     train_dfs = []
     val_dfs = []
     
-    print("\n🔍 正在生成/載入特徵...")
+    print(f"\n🔍 正在生成/載入特徵... (目標: {target_col} >= {args.target_return*100:g}%)")
     for ticker in args.tickers:
         if ticker not in all_raw_data:
             print(f"  ⚠️ 找不到 {ticker} 原始資料，跳過。")
@@ -107,16 +110,17 @@ def prepare_data(args, train_ranges, val_range):
         df_features = calculate_features(df_raw, benchmark_df, ticker=ticker, use_cache=use_cache)
         
         # 1. 確保目標欄位存在並過濾 NaN
-        if 'Next_20d_Max' not in df_features.columns:
+        if target_col not in df_features.columns:
+            print(f"  ⚠️ 找不到特徵欄位 {target_col}，請確定 calculate_features 已支援該天數。")
             continue
-        df_features = df_features.dropna(subset=['Next_20d_Max'])
+        df_features = df_features.dropna(subset=[target_col])
         
         # 2. 加入 date 與 ticker
         df_features['ticker'] = ticker
         df_features['date'] = df_features.index.strftime('%Y-%m-%d')
         
         # 3. 建立標籤 y
-        df_features['y'] = (df_features['Next_20d_Max'] >= 0.10).astype(int)
+        df_features['y'] = (df_features[target_col] >= args.target_return).astype(int)
         
         # 4. 時間切分 (Walk-forward Split)
         # 訓練集
@@ -299,7 +303,7 @@ def main():
     print("🚀 Sklearn Binary Classifier Training")
     print("=" * 60)
     print(f"  Model       : {args.model}")
-    print(f"  Target      : Next_20d_Max >= 10%")
+    print(f"  Target      : Next_{args.target_days}d_Max >= {args.target_return*100:g}%")
     print(f"  Tickers     : {', '.join(args.tickers)}")
     print(f"  Train Ranges: {train_ranges}")
     print(f"  Val Range   : {val_range}")
@@ -359,7 +363,7 @@ def main():
     
     # 5. 輸出儲存
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(args.output_dir, f"run_{args.model}_{run_ts}")
+    run_dir = os.path.join(args.output_dir, f"run_{args.model}_{args.target_days}d_{run_ts}")
     os.makedirs(run_dir, exist_ok=True)
     
     # (a) Model joblib
@@ -368,6 +372,7 @@ def main():
     # (b) Params Json
     params = {
         "cli_args": vars(args),
+        "target_definition": f"Next_{args.target_days}d_Max >= {args.target_return}",
         "actual_train_ranges": train_ranges,
         "actual_val_range": val_range,
         "train_samples_raw": len(df_train),

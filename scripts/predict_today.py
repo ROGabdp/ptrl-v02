@@ -42,6 +42,8 @@ def parse_args():
     parser.add_argument("--tickers", nargs="+", 
                         default=["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR"],
                         help="要預測的目標股票列表 (預設 10 檔)")
+    parser.add_argument("--target-days", type=int, default=20, help="預測未來的交易天數 (對應模型訓練設定)")
+    parser.add_argument("--target-return", type=float, default=0.10, help="目標最高價漲幅門檻 (對應模型訓練設定)")
     parser.add_argument("--threshold", type=float, default=0.5, help="決定買進的正類機率閾值 (預設 0.5)")
     parser.add_argument("--no-cache", action="store_true", help="強制重新計算特徵而不是讀取昨天快取")
     return parser.parse_args()
@@ -87,6 +89,7 @@ def main():
     
     print(f"  System Type : {model_type.upper()} ({model_ext})")
     print(f"  Model Path  : {args.model_path}")
+    print(f"  Target      : Next_{args.target_days}d_Max >= {args.target_return*100:g}%")
     print(f"  Tickers     : {', '.join(args.tickers)}")
     print(f"  Threshold   : {args.threshold}")
     print("====================================================================\n")
@@ -150,20 +153,21 @@ def main():
     # 3. 列印最終報表
     print("\n📊 今日推論結果 (Prediction for Latest Close)")
     print("-" * 65)
-    print(f"{'Ticker':<8} | {'Latest Date':<12} | {'P(Buy) %':<12} | {'Decision':<15}")
+    header_prob = f"P({args.target_days}d>={args.target_return*100:g}%)"
+    print(f"{'Ticker':<8} | {'Latest Date':<12} | {header_prob:<14} | {'Decision':<15}")
     print("-" * 65)
     
     buy_count = 0
     for tk, dt, pb, st in results:
-        if np.isnan(pb):
+        if isinstance(pb, str) or np.isnan(pb):
              pb_str = "N/A"
         else:
              pb_str = f"{pb*100:6.2f}%"
              if pb >= args.threshold: buy_count += 1
              
-        print(f"{tk:<8} | {dt:<12} | {pb_str:<12} | {st:<15}")
+        print(f"{tk:<8} | {dt:<12} | {pb_str:<14} | {st:<15}")
     print("-" * 65)
-    print(f"🎯 總計符合買進門檻 ({args.threshold}): {buy_count} 檔")
+    print(f"🎯 總計 ({header_prob}) 符合買進門檻 ({args.threshold}): {buy_count} 檔")
     print("====================================================================\n")
 
 if __name__ == "__main__":

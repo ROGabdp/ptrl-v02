@@ -292,8 +292,11 @@ python scripts/eval_ppo_classifier.py --model-path models_v5/ppo_buy_base_us_tec
 如果您已經有訓練好的 `.joblib` (Sklearn) 或是 `.zip` (PPO) 檔案，可以直接透過 `scripts/predict_today.py` 每日執行，腳本會自動抓取最新的 YF 收盤數據、轉換特徵，並產出一份當日買點判定清單。
 
 ```bash
-# 讓 HGB 模型判斷預設 10 檔股票的最新買點
+# 基本推論：使用已經訓練好的 20 天 10% HGB 模型判斷預設 10 檔股票的最新買點
 python scripts/predict_today.py --model-path output_sklearn/run_hgb_123/model.joblib
+
+# 自訂目標推論：若模型是特別訓練 120 天 20% 的目標，需搭配相同設定讓列印資訊正確
+python scripts/predict_today.py --model-path output_sklearn/run_hgb_120d_123/model.joblib --target-days 120 --target-return 0.20
 
 # 載入各自的 PPO 微調模型，預測指定 3 檔最新買點
 python scripts/predict_today.py --model-path "models_v5/finetuned/{ticker}/best/best_model.zip" --tickers NVDA MSFT TSLA
