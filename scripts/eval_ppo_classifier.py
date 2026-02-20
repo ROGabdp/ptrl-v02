@@ -48,7 +48,7 @@ def parse_args():
     
     # 必填模型參數
     parser.add_argument("--model-path", type=str, required=True, 
-                        help="必填：PPO 儲存的模型壓縮檔路徑 (例如: models_v5/ppo_buy_base_us_tech.zip)")
+                        help="必填：PPO 模型檔案路徑 (若要動態載入各自微調模型，可包含 {ticker} 變數，如 models_v5/finetuned/{ticker}/best/best_model.zip)")
                         
     # 資料參數
     parser.add_argument("--tickers", nargs="+", 
@@ -228,7 +228,8 @@ def main():
     print(f"  Dry Run     : {args.dry_run}")
     print("=" * 60)
     
-    if not os.path.exists(args.model_path):
+    multi_model = "{ticker}" in args.model_path
+    if not multi_model and not os.path.exists(args.model_path):
         print(f"❌ 找不到指定的模型路徑: {args.model_path}")
         sys.exit(1)
     
@@ -246,29 +247,71 @@ def main():
         print("\n✅ Dry-Run 模式結束。")
         sys.exit(0)
         
-    # 2. 準備特徵陣列 
+    # 2. 準備特徵陣列與機率容器 
     X_val = df_val[FEATURE_COLS].values.astype(np.float32)
     y_val = df_val['y'].values
+    y_proba_val = np.full(len(df_val), np.nan, dtype=np.float32)
     
-    # 3. 載入模型 (不使用 custom_objects，只倚靠基底 model_path 中記載的網路架構即可推論)
-    print("\n📦 載入 PPO 模型...")
-    try:
-        # 強制指定 device="cpu" 防止 device map error
-        model_ppo = PPO.load(args.model_path, device="cpu")
-    except Exception as e:
-        print(f"❌ PPO 模型載入失敗: {e}")
-        sys.exit(1)
+    # 3. 載入模型並推論
+    if not multi_model:
+        # 單一模型模式 (Single Base Model)
+        print("\n📦 載入 PPO 模型...")
+        try:
+            model_ppo = PPO.load(args.model_path, device="cpu")
+        except Exception as e:
+            print(f"❌ PPO 模型載入失敗: {e}")
+            sys.exit(1)
+            
+        y_proba_val = get_ppo_probabilities(model_ppo, X_val)
+    else:
+        # 各 Ticker 獨立微調模型模式
+        print("\n📦 進入「獨立載入微調模型 (Per-ticker)」推論模式...")
+        for ticker in args.tickers:
+            if "{ticker}" in args.model_path:
+                model_file = args.model_path.replace("{ticker}", ticker)
+            else:
+                model_file = args.model_path
+            
+            idx = df_val['ticker'] == ticker
+            if not idx.any():
+                continue
+                
+            if not os.path.exists(model_file):
+                print(f"  ⚠️ 找不到 {ticker} 的模型路徑: {model_file}，略過評估。")
+                continue
+                
+            print(f"  -> {ticker} : {model_file}")
+            try:
+                model_ppo = PPO.load(model_file, device="cpu")
+            except Exception as e:
+                print(f"  ❌ {ticker} 模型載入失敗: {e}")
+                continue
+                
+            X_val_ticker = df_val.loc[idx, FEATURE_COLS].values.astype(np.float32)
+            y_proba_val[idx] = get_ppo_probabilities(model_ppo, X_val_ticker)
+            
+    # 過濾掉未獲取推論結果的樣本 (找不到專屬模型的 Ticker)
+    valid_mask = ~np.isnan(y_proba_val)
+    if not valid_mask.all():
+        num_excluded = np.sum(~valid_mask)
+        print(f"\n⚠️ 排除 {num_excluded} 筆因無法載入專屬模型而缺失推論結果的樣本。")
+        df_val = df_val[valid_mask].copy()
+        y_val = df_val['y'].values
+        y_proba_val = y_proba_val[valid_mask]
         
-    # 4. 推論提取機率
-    y_proba_val = get_ppo_probabilities(model_ppo, X_val)
+    if len(df_val) == 0:
+        print("❌扣除缺失模型的樣本後，無有效評估資料。")
+        sys.exit(1)
     
     # 5. 計算指標
-    print("📈 正在計算指標陣列...")
+    print("\n📈 正在計算指標陣列...")
     metrics = calc_metrics(y_val, y_proba_val, threshold=args.threshold, prefix="Pooled Overall")
     
     # 6. 輸出儲存
-    # 由 model 檔名當作資料夾前綴
-    base_name = os.path.basename(args.model_path).replace(".zip", "")
+    if multi_model:
+        base_name = "per_ticker_finetuned"
+    else:
+        base_name = os.path.basename(args.model_path).replace(".zip", "")
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = os.path.join(args.output_dir, f"eval_ppo_{base_name}_{run_ts}")
     os.makedirs(run_dir, exist_ok=True)
