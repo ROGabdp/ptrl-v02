@@ -267,10 +267,14 @@ python scripts/train_sklearn_classifier.py --dry-run
 此腳本會調用所選 PPO 模型的 policy network，透過 `model.policy.get_distribution()` 在 `no_grad` 模式下提取 $P(action_{buy}|x)$ 機率，對齊 Sklearn 工具相同格式的指標陣列。
 
 ```bash
-# 針對特定股票群使用已訓練模型評估 (預設 Threshold = 0.5)
+# 針對特定股票群使用單一部署模型評估 (預設 Threshold = 0.5)
 python scripts/eval_ppo_classifier.py --model-path models_v5/ppo_buy_base_us_tech.zip --tickers NVDA MSFT TSLA --threshold 0.5
 
-# 查看該模型在指定 Ticker Validation 上的分佈狀況 (Dry Run 不推論)
+# 針對各 ticker 獨立載入其對應微調後的 best_model.zip 進行評估
+# (使用 {ticker} 變數，腳本將自動幫每個 ticker 尋找並載入該專屬模型)
+python scripts/eval_ppo_classifier.py --model-path "models_v5/finetuned/{ticker}/best/best_model.zip" --tickers NVDA MSFT TSLA
+
+# 查看推論資料列與狀態分布 (Dry Run 不做實際推論)
 python scripts/eval_ppo_classifier.py --model-path models_v5/ppo_buy_base_us_tech.zip --tickers NVDA --dry-run
 ```
 
