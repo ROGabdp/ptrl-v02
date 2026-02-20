@@ -230,6 +230,34 @@ python backtest_market_filter.py --tickers NVDA TSLA
 
 ---
 
+## Scikit-Learn 輔助分類訓練腳本
+
+除了 PPO 訓練外，本專案提供傳統機器學習演算法的獨立二元分類模型，用於快速驗證特徵與「**未來 20 交易日內是否達到 +10% 報酬**」的關聯性。
+
+### 1. 訓練特徵模型
+
+腳本會自動重用 `train_us_tech_buy_agent.py` 的快取資料與特徵抽取邏輯。支援 RandomForest (`rf`)、AdaBoost (`adaboost`) 與 HistGradientBoosting (`hgb`)。
+
+```bash
+# 預設訓練 RF 模型 (針對 NVDA，並處理類別不平衡)
+python scripts/train_sklearn_classifier.py --tickers NVDA --model rf --balance-train class_weight_balanced
+
+# 訓練所有 10 檔股票的通用 HGB 模型
+python scripts/train_sklearn_classifier.py --model hgb
+
+# 測試資料維度、正類比與切分狀態但不實際訓練
+python scripts/train_sklearn_classifier.py --dry-run
+```
+
+### 2. 相關參數與驗證
+
+- `--balance-train`: 支援 `none`, `undersample_50_50`, `class_weight_balanced`。
+- `--train-ranges`: 支援 Walk-Forward 設定多段訓練區間（如 `2000-01-01:2017-10-15`）。
+- **輸出包含**:
+  模型將輸出於 `output_sklearn/run_{model}_{datetime}/`，涵蓋 Precision/Recall, AUROC, AUPRC, Threshold Sweep 以及 `metrics.json` 中的各特徵重要性 (Feature Importances)。
+
+---
+
 ## 回測績效參考
 
 ### 無濾網版本 (2017-10-16 ~ 2023-10-15)
@@ -387,7 +415,10 @@ ptrl-v02/
 ├── grid_search_nvda_params.py      # NVDA 參數網格搜索 ⭐
 ├── regenerate_best_params.py       # 參數重新生成輔助腳本
 ├── sensitivity_analysis.py         # 參數敏感度分析
+├── scripts/                        # 獨立分析與訓練工具
+│   └── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
 ├── models_v5/                      # 模型儲存
+├── output_sklearn/                 # sklearn 訓練結果輸出
 ├── data/stocks/                    # 股票數據 CSV
 ├── logs/                           # 系統日誌
 ├── tensorboard_logs/               # TensorBoard 監控日誌

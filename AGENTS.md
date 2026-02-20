@@ -4,11 +4,12 @@
 This repository is a script-first Python project for RL training and backtesting of US tech equities.
 - Core training: `train_us_tech_buy_agent.py`
 - Evaluation/backtests: `test_*.py`, `backtest_*.py`, `sensitivity_analysis.py`, `grid_search_nvda_params.py`
+- Auxiliary Scripts: `scripts/` (獨立或次要的訓練與測量腳本，如 `train_sklearn_classifier.py`)
 - Model artifacts: `models_v5/` (tracked manifest in `models_v5/model_manifest.json`)
 - Reference implementations: `reference/`
-- Generated outputs (not always tracked): `test_results/`, `backtest_results*/`, `grid_search_results_nvda/`, `sensitivity_results/`
+- Generated outputs (not always tracked): `test_results/`, `backtest_results*/`, `grid_search_results_nvda/`, `sensitivity_results/`, `output_sklearn/`
 
-Keep new analysis tools as top-level scripts unless a reusable module is clearly needed.
+Keep new analysis tools as top-level scripts unless a reusable module is clearly needed or cleanly segregated into `scripts/`.
 
 ## Build, Test, and Development Commands
 - `python -m venv .venv` then `.venv\\Scripts\\activate` (Windows): create/activate local environment.
