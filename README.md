@@ -258,6 +258,31 @@ python scripts/train_sklearn_classifier.py --dry-run
 
 ---
 
+## PPO 離線單步推論評估
+
+為了能夠在相同的 Validation 集上公平地與 Sklearn 模型（或其他基準模型）比較，專案提供針對已訓練好 PPO (`best_model.zip` 或 `final_model.zip`) 的獨立離線評估腳本。該腳本**不觸發重新訓練 (learn)、不呼樣 (Resample)，只進行純驗證集的 Metrics 生成**。
+
+### 1. 執行推論與評估
+
+此腳本會調用所選 PPO 模型的 policy network，透過 `model.policy.get_distribution()` 在 `no_grad` 模式下提取 $P(action_{buy}|x)$ 機率，對齊 Sklearn 工具相同格式的指標陣列。
+
+```bash
+# 針對特定股票群使用已訓練模型評估 (預設 Threshold = 0.5)
+python scripts/eval_ppo_classifier.py --model-path models_v5/ppo_buy_base_us_tech.zip --tickers NVDA MSFT TSLA --threshold 0.5
+
+# 查看該模型在指定 Ticker Validation 上的分佈狀況 (Dry Run 不推論)
+python scripts/eval_ppo_classifier.py --model-path models_v5/ppo_buy_base_us_tech.zip --tickers NVDA --dry-run
+```
+
+### 2. 輸出與指標
+
+與 `train_sklearn_classifier.py` 100% 對齊：
+- **輸出路徑**: 預設於 `output_eval_ppo/eval_ppo_{model_name}_{datetime}/`
+- 提供完整的 `metrics.json` (包含 P@k 與 Threshold sweep)
+- 輸出具時間與股票代碼標記的 CSV `val_predictions.csv`，便於視覺化或自訂評估策略。
+
+---
+
 ## 回測績效參考
 
 ### 無濾網版本 (2017-10-16 ~ 2023-10-15)
@@ -416,9 +441,11 @@ ptrl-v02/
 ├── regenerate_best_params.py       # 參數重新生成輔助腳本
 ├── sensitivity_analysis.py         # 參數敏感度分析
 ├── scripts/                        # 獨立分析與訓練工具
-│   └── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
+│   ├── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
+│   └── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
 ├── models_v5/                      # 模型儲存
 ├── output_sklearn/                 # sklearn 訓練結果輸出
+├── output_eval_ppo/                # PPO 離線推論評估輸出
 ├── data/stocks/                    # 股票數據 CSV
 ├── logs/                           # 系統日誌
 ├── tensorboard_logs/               # TensorBoard 監控日誌
