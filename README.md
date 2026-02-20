@@ -380,19 +380,23 @@ ptrl-v02/
 ├── train_us_tech_buy_agent.py      # 主訓練腳本
 ├── test_buy_agent_performance.py   # 決策表現評估
 ├── test_confidence_calibration.py  # 信心度分層分析
+├── test_us_tech_quick.py           # 快速測試腳本
 ├── backtest_dynamic_trailing.py    # 深度回測 (無濾網)
 ├── backtest_market_filter.py       # 市場濾網回測
 ├── backtest_nvda_follow.py         # NVDA 專屬跟單回測 ⭐
 ├── grid_search_nvda_params.py      # NVDA 參數網格搜索 ⭐
+├── regenerate_best_params.py       # 參數重新生成輔助腳本
 ├── sensitivity_analysis.py         # 參數敏感度分析
 ├── models_v5/                      # 模型儲存
+├── data/stocks/                    # 股票數據 CSV
+├── logs/                           # 系統日誌
+├── tensorboard_logs/               # TensorBoard 監控日誌
 ├── test_results/                   # 評估結果
 ├── backtest_results/               # 回測結果
 ├── backtest_results_filtered_*/    # 濾網回測結果 (依日期)
 ├── backtest_results_nvda/          # NVDA 跟單回測結果 ⭐
 ├── grid_search_results_nvda/       # 網格搜索結果 ⭐
-├── sensitivity_results/            # 敏感度分析結果
-└── data/stocks/                    # 股票數據 CSV
+└── sensitivity_results/            # 敏感度分析結果
 ```
 
 ---
