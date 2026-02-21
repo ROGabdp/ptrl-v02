@@ -61,17 +61,28 @@ def get_ticker_profile(tk, profiles):
         return profiles["default"], "default"
     return {}, "cli_args"
 
-def evaluate_regime_risk_from_row(row: pd.Series) -> bool:
-    above_ma = row.get("BM_ABOVE_MA200", 1)
-    ret_120 = row.get("BM_RET_120", 0)
-    hv20_pctl = row.get("BM_HV20_PCTL", 0)
+def evaluate_regime_risk_from_row(row: pd.Series) -> tuple:
+    # 支援新舊欄位名 (有/沒有 REGIME_ 前綴)
+    above_ma = row.get("REGIME_BM_ABOVE_MA200", row.get("BM_ABOVE_MA200", 1))
+    if pd.isna(above_ma): above_ma = 1
+
+    ret_120 = row.get("REGIME_BM_RET_120", row.get("BM_RET_120", 0))
+    if pd.isna(ret_120): ret_120 = 0
+
+    hv20_pctl = row.get("REGIME_BM_HV20_PCTL", row.get("BM_HV20_PCTL", 0))
+    if pd.isna(hv20_pctl): hv20_pctl = 0
     
     is_high_risk = False
+    risk_reason = ""
+    
     if above_ma == 0 and hv20_pctl > 0.8:
         is_high_risk = True
+        risk_reason = "MA200_below_and_HVhigh"
     elif ret_120 < 0 and hv20_pctl > 0.8:
         is_high_risk = True
-    return is_high_risk
+        risk_reason = "RET120_neg_and_HVhigh"
+        
+    return is_high_risk, risk_reason, above_ma, ret_120, hv20_pctl
 
 def is_retrain_needed(freq: str, current_date: pd.Timestamp, last_train_date: pd.Timestamp) -> bool:
     if last_train_date is None:
@@ -461,16 +472,25 @@ def main():
         elif 'index' in feat_df.columns: feat_df.rename(columns={'index': 'date'}, inplace=True)
         feat_df['date'] = pd.to_datetime(feat_df['date'])
         
-        if regime_profile in ["bm_only", "bm_plus_stock"]:
-            feat_df['date_str'] = feat_df['date'].dt.strftime('%Y-%m-%d')
-            feat_df = pd.merge(feat_df, regime_df, left_on='date_str', right_on='date_str', how='left', suffixes=('', '_reg'))
-            
-            if regime_profile == "bm_plus_stock":
-                df_stock_regime = compute_stock_regime_features(raw_df, benchmark_df)
-                df_stock_regime['date_str'] = pd.to_datetime(df_stock_regime['date']).dt.strftime('%Y-%m-%d')
-                feat_df = pd.merge(feat_df, df_stock_regime, left_on='date_str', right_on='date_str', how='left', suffixes=('', '_stk'))
+        # 為了讓風控 evaluate_regime_risk_from_row 總是能動，強制合併大盤 regime_df
+        feat_df['date_str'] = feat_df['date'].dt.strftime('%Y-%m-%d')
+        feat_df = pd.merge(feat_df, regime_df, left_on='date_str', right_on='date_str', how='left', suffixes=('', '_reg'))
+        
+        # 若有要求個股 regime，才合併 df_stock_regime
+        if regime_profile == "bm_plus_stock":
+            df_stock_regime = compute_stock_regime_features(raw_df, benchmark_df)
+            df_stock_regime['date_str'] = pd.to_datetime(df_stock_regime['date']).dt.strftime('%Y-%m-%d')
+            feat_df = pd.merge(feat_df, df_stock_regime, left_on='date_str', right_on='date_str', how='left', suffixes=('', '_stk'))
                 
-        # Fill NA safely from merge dropping if needed (handled by train_slice dropping later)
+        # 欄位正規化對齊 (Strategy A: auto-fix _reg suffixes & aliases)
+        # 本專案的真實特徵全名其實帶有 REGIME_ 前綴
+        target_bms = ["REGIME_BM_ABOVE_MA200", "REGIME_BM_RET_120", "REGIME_BM_HV20_PCTL"]
+        for bm_key in target_bms:
+            if bm_key not in feat_df.columns:
+                if f"{bm_key}_reg" in feat_df.columns:
+                    feat_df[bm_key] = feat_df[f"{bm_key}_reg"]
+                elif bm_key.replace("REGIME_", "") in feat_df.columns:
+                    feat_df[bm_key] = feat_df[bm_key.replace("REGIME_", "")]
         
         # Test slice
         test_df = feat_df[
@@ -546,7 +566,13 @@ def main():
                 pct_rank_today = 0.5 # default mid if no history
                 
             # Risk evaluate
-            is_high_risk = evaluate_regime_risk_from_row(row)
+            is_high_risk, risk_reason, bm_above_ma, bm_ret_120, bm_hv20_pctl = evaluate_regime_risk_from_row(row)
+            
+            # 防呆檢查：真的沒撈到特徵的話降級並留 Log
+            if "REGIME_BM_ABOVE_MA200" not in row.index or pd.isna(row["REGIME_BM_ABOVE_MA200"]):
+                is_high_risk = False
+                risk_reason = "MISSING_BM_FEATURES"
+                
             act_thresh = args.threshold_risk if is_high_risk else args.threshold_normal
             
             if pct_rank_today >= act_thresh:
@@ -562,6 +588,11 @@ def main():
                 'p_t': p_today,
                 'pct_rank_t': pct_rank_today,
                 'is_high_risk': is_high_risk,
+                'risk_reason': risk_reason,
+                'bm_above_ma200': bm_above_ma,
+                'bm_ret_120': bm_ret_120,
+                'bm_hv20_pctl': bm_hv20_pctl,
+                'act_thresh_used': act_thresh,
                 'action': action,
                 'buy_ratio': buy_ratio,
                 'model_version_id': model_version_id,
@@ -574,6 +605,21 @@ def main():
             print(f"⚠️  No valid signals generated for {tk}. Skipping backtest.")
             continue
             
+        high_risk_days = signals_df['is_high_risk'].sum()
+        reasons_dist = signals_df[signals_df['risk_reason'] != '']['risk_reason'].value_counts().to_dict()
+        print(f"  [Risk Logic Check] High Risk Days: {high_risk_days} / {len(signals_df)}")
+        if reasons_dist:
+            print(f"  [Risk Logic Check] Reasons: {reasons_dist}")
+            
+        if high_risk_days == 0:
+            print(f"  ⚠️ WARNING: 0 High Risk Days! Check BM Feats:")
+            missing_check = ["REGIME_BM_ABOVE_MA200", "REGIME_BM_RET_120", "REGIME_BM_HV20_PCTL"]
+            for mc in missing_check:
+                if mc in test_df.columns:
+                    print(f"      - {mc} isnull mean: {test_df[mc].isnull().mean():.2%}, unique: {test_df[mc].nunique()}")
+                else:
+                    print(f"      - {mc} NOT FOUND in test_df fields!")
+                    
         signals_df.to_csv(os.path.join(tk_dir, "daily_signals.csv"), index=False)
         
         # Run Backtest
