@@ -77,6 +77,8 @@ output_eval_ppo/
 output_analysis/
 output_daily/
 output_rolling_*/
+output_compare_v2/
+output_gate_eval/
 # =============================================================================
 # OS Generated
 # =============================================================================
