@@ -24,7 +24,8 @@
 
 ### 目標標籤
 
-Buy Agent 預測：**未來 20 交易日內，最高價報酬率是否達到 +10% 以上**
+Buy Agent 預設預測：**未來 20 交易日內，最高價報酬率是否達到 +10% 以上**
+*(在 sklearn 等輔助腳本中支援參數化，如 120 天 20%)*
 
 ### 獎勵機制 (對稱獎勵結構)
 
@@ -253,8 +254,9 @@ python scripts/train_sklearn_classifier.py --dry-run
 
 - `--balance-train`: 支援 `none`, `undersample_50_50`, `class_weight_balanced`。
 - `--train-ranges`: 支援 Walk-Forward 設定多段訓練區間（如 `2000-01-01:2017-10-15`）。
+- `--target-days` 與 `--target-return`: 可自訂預測目標的天數與報酬門檻 (例如：`--target-days 120 --target-return 0.20`)。
 - **輸出包含**:
-  模型將輸出於 `output_sklearn/run_{model}_{datetime}/`，涵蓋 Precision/Recall, AUROC, AUPRC, Threshold Sweep 以及 `metrics.json` 中的各特徵重要性 (Feature Importances)。
+  模型將輸出於 `output_sklearn/run_{model}_{target_days}d_{datetime}/`，涵蓋 Precision/Recall, AUROC, AUPRC, Threshold Sweep 以及 `metrics.json` 中的各特徵重要性 (Feature Importances)。
 
 ---
 
@@ -314,6 +316,27 @@ TSLA     | 2026-02-20   |  58.91%      | BUY 🟢
 -----------------------------------------------------------------
 🎯 總計符合買進門檻 (0.5): 1 檔
 ```
+
+---
+
+## 特徵飄移診斷 (Regime Shift Analytics)
+
+針對長天期預測（例如 120天）可能發生的模型失效（如 Validation ROC-AUC < 0.5），專案提供 `analyze_topk_feature_shifts.py` 自動分析各年份的極端分數群體，以此釐清是哪些特徵不再適用於近年的市場（發生了 Regime Shift）。
+
+### 使用方式
+
+只需要傳入預測完成產出的 `val_predictions.csv`：
+
+```bash
+# 對特定型號與標的，取預測分數最極端的 Top 5% 來比對差異
+python scripts/analyze_topk_feature_shifts.py --val-predictions output_sklearn/run_hgb_120d_123/val_predictions.csv --ticker GOOGL --topk-pct 5 --output-dir output_analysis
+```
+
+### 診斷輸出
+
+輸出目錄下會依照各年份產生統計對比表，例如：
+- `YYYY_feature_diff_A_vs_B.csv`：排列出高分群(A)與低分群(B)之間，**標準化差異 (Standardized Diff) 最大**的反轉特徵。
+- `summary.json`：總覽各年度的 Precision@k 表現，若低分群的真實勝率大於高分群，會留下警告標記與特徵翻轉排名。
 
 ---
 
@@ -477,7 +500,8 @@ ptrl-v02/
 ├── scripts/                        # 獨立分析與訓練工具
 │   ├── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
 │   ├── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
-│   └── predict_today.py            # 日常買點預測推論工具
+│   ├── predict_today.py            # 日常買點預測推論工具
+│   └── analyze_topk_feature_shifts.py # 特徵翻轉與 Regime Shift 診斷
 ├── models_v5/                      # 模型儲存
 ├── output_sklearn/                 # sklearn 訓練結果輸出
 ├── output_eval_ppo/                # PPO 離線推論評估輸出
