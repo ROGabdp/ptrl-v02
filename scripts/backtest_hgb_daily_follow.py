@@ -61,16 +61,69 @@ def get_ticker_profile(tk, profiles):
         return profiles["default"], "default"
     return {}, "cli_args"
 
+def resolve_bm_value(row: pd.Series, candidates: list) -> tuple:
+    """
+    從 row 中按優先序對每個候選欄位名嘗試取得非 NaN 的數字。
+    回傳 (value, source_key, source_name)。
+    source_name 必表2018\u5f0f之一: 'REGIME', 'REGIME_reg', 'BM', 'BM_reg', 'DEFAULT_MISSING'
+    """
+    for col in candidates:
+        if col in row.index:
+            val = row[col]
+            if not pd.isna(val):
+                # 判斷來源
+                if col.startswith("REGIME_BM_") and col.endswith("_reg"):
+                    src = "REGIME_reg"
+                elif col.startswith("REGIME_BM_"):
+                    src = "REGIME"
+                elif col.startswith("BM_") and col.endswith("_reg"):
+                    src = "BM_reg"
+                elif col.startswith("BM_"):
+                    src = "BM"
+                else:
+                    src = "UNKNOWN"
+                return float(val), col, src
+    return np.nan, None, "DEFAULT_MISSING"
+
 def evaluate_regime_risk_from_row(row: pd.Series) -> tuple:
-    # 支援新舊欄位名 (有/沒有 REGIME_ 前綴)
-    above_ma = row.get("REGIME_BM_ABOVE_MA200", row.get("BM_ABOVE_MA200", 1))
-    if pd.isna(above_ma): above_ma = 1
-
-    ret_120 = row.get("REGIME_BM_RET_120", row.get("BM_RET_120", 0))
-    if pd.isna(ret_120): ret_120 = 0
-
-    hv20_pctl = row.get("REGIME_BM_HV20_PCTL", row.get("BM_HV20_PCTL", 0))
-    if pd.isna(hv20_pctl): hv20_pctl = 0
+    """
+    使用 resolve_bm_value 安全解析大盤風控指標。
+    回傳：(is_high_risk, risk_reason, bm_above_ma200, bm_ret_120, bm_hv20_pctl, bm_source)
+    bm_source = 三個指標各自的讀取來源，用 '|' 隔開，方便 debug。
+    严禁使用無 BM_ 前綴的欄位（如 RET_120），避免誤用單股特徵進行判斷。
+    """
+    CANDIDATES = {
+        "above_ma200": [
+            "REGIME_BM_ABOVE_MA200",
+            "REGIME_BM_ABOVE_MA200_reg",
+            "BM_ABOVE_MA200",
+            "BM_ABOVE_MA200_reg",
+        ],
+        "ret_120": [
+            "REGIME_BM_RET_120",
+            "REGIME_BM_RET_120_reg",
+            "BM_RET_120",
+            "BM_RET_120_reg",
+        ],
+        "hv20_pctl": [
+            "REGIME_BM_HV20_PCTL",
+            "REGIME_BM_HV20_PCTL_reg",
+            "BM_HV20_PCTL",
+            "BM_HV20_PCTL_reg",
+        ],
+    }
+    
+    above_ma, above_ma_key, above_ma_src = resolve_bm_value(row, CANDIDATES["above_ma200"])
+    ret_120, ret_120_key, ret_120_src = resolve_bm_value(row, CANDIDATES["ret_120"])
+    hv20_pctl, hv20_pctl_key, hv20_pctl_src = resolve_bm_value(row, CANDIDATES["hv20_pctl"])
+    
+    bm_source = f"{above_ma_src}|{ret_120_src}|{hv20_pctl_src}"
+    
+    # 三者任一為 NaN 就前視為缺失
+    missing_keys = [k for k, v in [(above_ma_key, above_ma), (ret_120_key, ret_120), (hv20_pctl_key, hv20_pctl)] if np.isnan(v)]
+    if missing_keys:
+        missing_str = ",".join([k if k else "(not_found)" for k in missing_keys])
+        return False, f"MISSING_BM_FEATURES:{missing_str}", np.nan, np.nan, np.nan, bm_source
     
     is_high_risk = False
     risk_reason = ""
@@ -82,7 +135,7 @@ def evaluate_regime_risk_from_row(row: pd.Series) -> tuple:
         is_high_risk = True
         risk_reason = "RET120_neg_and_HVhigh"
         
-    return is_high_risk, risk_reason, above_ma, ret_120, hv20_pctl
+    return is_high_risk, risk_reason, above_ma, ret_120, hv20_pctl, bm_source
 
 def is_retrain_needed(freq: str, current_date: pd.Timestamp, last_train_date: pd.Timestamp) -> bool:
     if last_train_date is None:
@@ -565,14 +618,8 @@ def main():
             else:
                 pct_rank_today = 0.5 # default mid if no history
                 
-            # Risk evaluate
-            is_high_risk, risk_reason, bm_above_ma, bm_ret_120, bm_hv20_pctl = evaluate_regime_risk_from_row(row)
-            
-            # 防呆檢查：真的沒撈到特徵的話降級並留 Log
-            if "REGIME_BM_ABOVE_MA200" not in row.index or pd.isna(row["REGIME_BM_ABOVE_MA200"]):
-                is_high_risk = False
-                risk_reason = "MISSING_BM_FEATURES"
-                
+            # Risk evaluate (完全委託 evaluate_regime_risk_from_row，不做外部覆蓋)
+            is_high_risk, risk_reason, bm_above_ma, bm_ret_120, bm_hv20_pctl, bm_src = evaluate_regime_risk_from_row(row)
             act_thresh = args.threshold_risk if is_high_risk else args.threshold_normal
             
             if pct_rank_today >= act_thresh:
@@ -589,6 +636,7 @@ def main():
                 'pct_rank_t': pct_rank_today,
                 'is_high_risk': is_high_risk,
                 'risk_reason': risk_reason,
+                'bm_source': bm_src,
                 'bm_above_ma200': bm_above_ma,
                 'bm_ret_120': bm_ret_120,
                 'bm_hv20_pctl': bm_hv20_pctl,
@@ -607,12 +655,18 @@ def main():
             
         high_risk_days = signals_df['is_high_risk'].sum()
         reasons_dist = signals_df[signals_df['risk_reason'] != '']['risk_reason'].value_counts().to_dict()
+        bm_src_dist = signals_df['bm_source'].value_counts().to_dict() if 'bm_source' in signals_df else {}
+        missing_count = signals_df['risk_reason'].str.startswith('MISSING_BM_FEATURES').sum()
+        missing_pct = missing_count / len(signals_df) if len(signals_df) > 0 else 0
+        
         print(f"  [Risk Logic Check] High Risk Days: {high_risk_days} / {len(signals_df)}")
         if reasons_dist:
             print(f"  [Risk Logic Check] Reasons: {reasons_dist}")
+        print(f"  [Risk Logic Check] bm_source dist: {bm_src_dist}")
+        print(f"  [Risk Logic Check] MISSING_BM_FEATURES: {missing_count} ({missing_pct:.1%})")
             
-        if high_risk_days == 0:
-            print(f"  ⚠️ WARNING: 0 High Risk Days! Check BM Feats:")
+        if high_risk_days == 0 or missing_pct > 0.10:
+            print(f"  ⚠️ WARNING: is_high_risk=0 or MISSING rate >{missing_pct:.1%}! Check BM Feats:")
             missing_check = ["REGIME_BM_ABOVE_MA200", "REGIME_BM_RET_120", "REGIME_BM_HV20_PCTL"]
             for mc in missing_check:
                 if mc in test_df.columns:
