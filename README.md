@@ -338,13 +338,21 @@ python scripts/train_rolling_hgb.py --tickers TSM `
     "GOOGL": {
         "regime_profile": "bm_only",
         "hgb_reg_preset": "default"
+    },
+    "NVDA": {
+        "regime_profile": "bm_plus_stock",
+        "hgb_reg_preset": "regularized",
+        "reversal_gap_margin": 0.10,
+        "reversal_use_top10": "true",
+        "target_days": 20,
+        "target_return": 0.10
     }
 }
 ```
 
 **指令加掛 `--profiles-path` 執行：**
 ```powershell
-python scripts/train_rolling_hgb.py --tickers GOOGL TSM AMZN `
+python scripts/train_rolling_hgb.py --tickers GOOGL NVDA AMZN `
   --window-years 3 --target-days 120 --target-return 0.20 `
   --use-regime-features --profiles-path configs/rolling_profiles.json `
   --output-dir output_rolling_mix `
@@ -352,9 +360,9 @@ python scripts/train_rolling_hgb.py --tickers GOOGL TSM AMZN `
 ```
 
 如此一來，同一行批次指令內：
-- `GOOGL` 或 `AMZN`（未列於配置者）會採用 `default` 設定：大盤特徵 (`bm_only`) + `default` 模型。
-- `TSM` 會觸發其專屬設定：大盤與個股特徵雙重合併 (`bm_plus_stock`) + `regularized` 過渡防禦模型 + 指定自定義的 reversal margin 門檻。
-- 對應啟用的 `profile_name`、實際使用的 `regime_profile` 與 `hgb_reg_preset_used` 等，將同時被紀錄在輸出的 `params.json` 與總表 `rolling_summary.csv` 之中，以利後續的追蹤除錯。
+- `GOOGL` 或 `AMZN`（未列於配置者）會採用 `default` 設定：大盤特徵 (`bm_only`) + `default` 模型，且因為 JSON 內沒有覆寫 `target_days`，所以維持走指令的 120天/20% 回測標準。
+- `NVDA` 會霸氣捨棄原本的 `--target-days 120`，從 JSON 抓取「短線特調 20天 / 10%」的專屬目標去切分訓練集！這對於同時批次滾動穩健股與波動股非常重要。
+- 對應啟用的 `profile_name`、實際使用的 `regime_profile` 與切分使用的 `target_definition` 等，將同時被紀錄在輸出的 `params.json` 與總表 `rolling_summary.csv` 之中，以利後續追蹤除錯。
 
 ### 4. 自動化網格搜尋 (Window Years Grid)
 
