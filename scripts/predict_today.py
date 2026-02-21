@@ -46,7 +46,7 @@ def parse_args():
     
     # 推薦與目標參數
     parser.add_argument("--tickers", nargs="+", 
-                        default=["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR"],
+                        default=["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR", "TSM"],
                         help="要預測的目標股票列表")
     parser.add_argument("--target-days", type=int, default=120, help="預測未來的交易天數 (預設 120)")
     parser.add_argument("--target-return", type=float, default=0.20, help="目標最高價漲幅門檻 (預設 0.20)")
@@ -55,8 +55,8 @@ def parse_args():
     parser.add_argument("--window-years", type=int, default=3, help="訓練窗格大小 (預設 3 年)")
     parser.add_argument("--lookback-years", type=int, default=8, help="下載資料所需推前年數供 MA/特徵暖機用 (預設 8 年)")
     parser.add_argument("--pct-lookback-days", type=int, default=252, help="分位數計算推斷的樣本天數 (預設 252 交易日)")
-    parser.add_argument("--topk-threshold-pct", type=float, default=0.90, help="正常市場下作為買入標準之歷史分位數 (預設 0.90 -> Top 10%)")
-    parser.add_argument("--risk-threshold-pct", type=float, default=0.95, help="高風險市場下嚴格化之分位數門檻 (預設 0.95 -> Top 5%)")
+    parser.add_argument("--topk-threshold-pct", type=float, default=0.90, help="正常市場下作為買入標準之歷史分位數 (預設 0.90 -> Top 10%%)")
+    parser.add_argument("--risk-threshold-pct", type=float, default=0.95, help="高風險市場下嚴格化之分位數門檻 (預設 0.95 -> Top 5%%)")
     parser.add_argument("--use-regime-features", type=str, default="true", choices=["true", "false"])
     
     parser.add_argument("--force-retrain", action="store_true", help="強制重新訓練新模型忽略當日快取")

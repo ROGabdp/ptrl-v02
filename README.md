@@ -4,7 +4,7 @@
 
 ## 目標標的
 
-`NVDA`, `MSFT`, `AAPL`, `AMZN`, `META`, `AVGO`, `GOOGL`, `TSLA`, `NFLX`, `PLTR`
+`NVDA`, `MSFT`, `AAPL`, `AMZN`, `META`, `AVGO`, `GOOGL`, `TSLA`, `NFLX`, `PLTR`, `TSM`
 
 ## 核心訓練策略
 
@@ -330,7 +330,7 @@ python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --t
 ```powershell
 # 對全部的 tickers 以 3 年窗格、120天 20% 目標，開啟大盤防禦進行批次驗證 (支援並行加速)
 python scripts/run_rolling_all_tickers.py `
-  --tickers GOOGL NVDA MSFT AMZN META AVGO NFLX AAPL TSLA PLTR `
+  --tickers GOOGL NVDA MSFT AMZN META AVGO NFLX AAPL TSLA PLTR TSM `
   --output-dir output_rolling_all `
   --window-years 3 --target-days 120 --target-return 0.20 `
   --use-regime-features --reversal-gap-margin 0.10 `

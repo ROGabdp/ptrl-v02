@@ -48,7 +48,7 @@ def parse_args():
     
     # 資料參數
     parser.add_argument("--tickers", nargs="+", 
-                        default=["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR"],
+                        default=["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR", "TSM"],
                         help="目標股票代碼列表")
     parser.add_argument("--train-ranges", nargs="*", 
                         help="訓練資料區間。格式: YYYY-MM-DD:YYYY-MM-DD (可提供多段，空白分隔)")

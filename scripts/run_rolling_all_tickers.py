@@ -29,7 +29,7 @@ def parse_args():
     
     # 目標 Tickers 與輸出目錄
     parser.add_argument('--tickers', nargs='+', 
-                        default=['GOOGL', 'NVDA', 'MSFT', 'AMZN', 'META', 'AVGO', 'NFLX', 'AAPL', 'TSLA', 'PLTR'],
+                        default=['GOOGL', 'NVDA', 'MSFT', 'AMZN', 'META', 'AVGO', 'NFLX', 'AAPL', 'TSLA', 'PLTR', 'TSM'],
                         help="欲批次執行的股票代碼列表")
     parser.add_argument('--output-dir', type=str, default='output_rolling_all', help="批次根目錄")
     

@@ -58,7 +58,7 @@ warnings.filterwarnings('ignore')
 # =============================================================================
 # 常量定義
 # =============================================================================
-TICKERS = ["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR"]
+TICKERS = ["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR", "TSM"]
 BENCHMARK = "^IXIC"  # Nasdaq Composite
 
 # 訓練/驗證期間 (與 train_v5_models.py 一致)

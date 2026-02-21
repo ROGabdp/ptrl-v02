@@ -52,7 +52,7 @@ def parse_args():
                         
     # 資料參數
     parser.add_argument("--tickers", nargs="+", 
-                        default=["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR"],
+                        default=["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR", "TSM"],
                         help="目標股票代碼列表")
     parser.add_argument("--val-start-date", type=str, help="驗證區間起始日 (未提供則用 VAL_RANGE)")
     parser.add_argument("--val-end-date", type=str, help="驗證區間結束日 (未提供則用 VAL_RANGE)")
