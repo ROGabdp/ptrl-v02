@@ -531,13 +531,13 @@ python scripts/predict_today.py --model-path "models_v5/finetuned/{ticker}/best/
 python scripts/backtest_hgb_daily_follow.py --start 2023-01-01 --end 2023-12-31 --tickers NVDA TSLA
 
 # 完整 CLI 參數應用
-python scripts/backtest_hgb_daily_follow.py \
-  --profiles-path configs/rolling_profiles.json \
-  --start 2023-01-01 --end 2023-12-31 \
-  --tickers NVDA \
-  --retrain-freq monthly \
-  --threshold-normal 0.90 --threshold-risk 0.95 \
-  --buy-ratio-normal 0.25 --buy-ratio-risk 0.15 \
+python scripts/backtest_hgb_daily_follow.py `
+  --profiles-path configs/rolling_profiles.json `
+  --start 2023-01-01 --end 2023-12-31 `
+  --tickers NVDA `
+  --retrain-freq monthly `
+  --threshold-normal 0.90 --threshold-risk 0.95 `
+  --buy-ratio-normal 0.25 --buy-ratio-risk 0.15 `
   --output-dir backtest_results_hgb
 ```
 
