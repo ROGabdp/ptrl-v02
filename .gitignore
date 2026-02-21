@@ -72,6 +72,9 @@ backtest_*/
 test_results/
 grid_search_results_*/
 sensitivity_results/
+output_sklearn/
+output_eval_ppo/
+output_analysis/
 
 # =============================================================================
 # OS Generated
