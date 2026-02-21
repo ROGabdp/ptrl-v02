@@ -327,27 +327,27 @@ python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --t
 在跑完基礎的 Rolling 驗證後，我們可以使用 `scripts/run_rolling_all_tickers.py` 批次對所有 10 檔目標科技股啟動滾動測試，並透過 `scripts/summarize_all_tickers.py` 一鍵產出跨股票橫向比較的「最佳實務總表」。這能讓您立刻看出哪些股票在哪個年份最具反轉抵抗力！
 
 #### (1) 執行批次 Rolling 測試
-```bash
+```powershell
 # 對全部的 tickers 以 3 年窗格、120天 20% 目標，開啟大盤防禦進行批次驗證 (支援並行加速)
-python scripts/run_rolling_all_tickers.py \
-  --tickers GOOGL NVDA MSFT AMZN META AVGO NFLX AAPL TSLA PLTR \
-  --output-dir output_rolling_all \
-  --window-years 3 --target-days 120 --target-return 0.20 \
-  --use-regime-features --reversal-gap-margin 0.10 \
-  --val-years 2018 2019 2020 2021 2022 2023 2024 2025 \
-  --max-workers 2 \
+python scripts/run_rolling_all_tickers.py `
+  --tickers GOOGL NVDA MSFT AMZN META AVGO NFLX AAPL TSLA PLTR `
+  --output-dir output_rolling_all `
+  --window-years 3 --target-days 120 --target-return 0.20 `
+  --use-regime-features --reversal-gap-margin 0.10 `
+  --val-years 2018 2019 2020 2021 2022 2023 2024 2025 `
+  --max-workers 2 `
   --seed 42
 ```
 這會在 `output_rolling_all/` 底下自動建立各個 Ticker 的專屬資料夾，並寫入該股各自的 `rolling_summary.csv` 與每個年份的 Metrics。
 
 #### (2) 彙整全股票超級總表
-```bash
+```powershell
 # 掃描 output-dir 底下的各股報表，並彙整出指定起訖年份的單張 CSV
-python scripts/summarize_all_tickers.py \
-  --input-dir output_rolling_all \
-  --output-dir output_rolling_all \
-  --years-from 2018 --years-to 2025 \
-  --topk 10 \
+python scripts/summarize_all_tickers.py `
+  --input-dir output_rolling_all `
+  --output-dir output_rolling_all `
+  --years-from 2018 --years-to 2025 `
+  --topk 10 `
   --sort-by mean_top10_hit_proba
 ```
 這會產出終極的 `all_tickers_summary.csv` 大表與 Json，提供包含：`mean_roc_auc`、各股最差年度的 Gap、Top 10 的平均命中率、甚至列舉該股票是否發生 `reversal_year_count_v2`（雙保險反轉警報）等一覽無遺的評比！
