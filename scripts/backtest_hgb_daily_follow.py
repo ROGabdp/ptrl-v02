@@ -98,6 +98,8 @@ class HGBDailyFollowBacktester:
         self.trades = []
         self.equity_curve = []
         self.injection_log = []
+        self.buy_signals = []
+        self.sell_signals = []
         
         # 參數
         self.threshold_normal = args.threshold_normal
@@ -188,6 +190,7 @@ class HGBDailyFollowBacktester:
                         'exit_reason': sell_reason,
                         'confidence': pos['confidence']
                     })
+                    self.sell_signals.append((date, price, sell_reason))
                     positions_to_remove.append(idx)
                     
             for idx in sorted(positions_to_remove, reverse=True):
@@ -211,6 +214,7 @@ class HGBDailyFollowBacktester:
                         'highest_price': price,
                         'confidence': row['p_t']
                     })
+                    self.buy_signals.append((date, price, 'BUY', row['p_t'], buy_ratio))
                     
         return self._generate_results(df)
         
@@ -250,8 +254,115 @@ class HGBDailyFollowBacktester:
             'trades': len(self.trades),
             'win_rate': win_rate,
             'equity_df': equity_df,
-            'trades_list': self.trades
+            'trades_list': self.trades,
+            'injection_log': self.injection_log,
+            'buy_signals': self.buy_signals,
+            'sell_signals': self.sell_signals
         }
+
+# =============================================================================
+# 繪圖與 Benchmark
+# =============================================================================
+def calculate_nasdaq_benchmark(benchmark_df: pd.DataFrame, start_date: str, end_date: str, yearly_injection: float = 2400) -> dict:
+    """計算 Nasdaq 買入持有的基準 (同等年度資金注入)"""
+    test_df = benchmark_df[
+        (benchmark_df.index >= pd.Timestamp(start_date)) &
+        (benchmark_df.index <= pd.Timestamp(end_date))
+    ].copy()
+    
+    if len(test_df) == 0:
+        return None
+    
+    dates = test_df.index.tolist()
+    closes = test_df['Close'].values
+    
+    total_shares = 0.0
+    total_invested = 0.0
+    equity_curve = []
+    
+    current_year = dates[0].year
+    year_first_day_processed = {current_year: True}
+    
+    if len(closes) > 0:
+        initial_price = closes[0]
+        initial_shares = yearly_injection / initial_price
+        total_shares += initial_shares
+        total_invested += yearly_injection
+    
+    for i, (date, price) in enumerate(zip(dates, closes)):
+        if date.year != current_year:
+            current_year = date.year
+            if current_year not in year_first_day_processed:
+                new_shares = yearly_injection / price
+                total_shares += new_shares
+                total_invested += yearly_injection
+                year_first_day_processed[current_year] = True
+        
+        current_value = total_shares * price
+        equity_curve.append({'date': date, 'value': current_value})
+    
+    if not equity_curve:
+        return None
+        
+    equity_df = pd.DataFrame(equity_curve)
+    equity_df['date'] = pd.to_datetime(equity_df['date'])
+    equity_df.set_index('date', inplace=True)
+    
+    final_value = total_shares * closes[-1]
+    total_return = (final_value - total_invested) / total_invested
+    return {'equity_df': equity_df, 'total_return': total_return}
+
+def plot_equity_curve(result: dict, benchmark: dict, output_dir: str, ticker: str, start_date: str, end_date: str):
+    """繪製具有 Benchmark、買賣點標記與資金注入線的淨值曲線圖"""
+    fig, ax = plt.subplots(figsize=(14, 8))
+    
+    equity_df = result['equity_df']
+    ax.plot(equity_df.index, equity_df['value'], 
+            label=f"{ticker} HGB Follow ({result['total_return']:.0%})",
+            linewidth=2, color='#4CAF50')
+    
+    if benchmark:
+        bench_equity = benchmark['equity_df']
+        ax.plot(bench_equity.index, bench_equity['value'],
+                label=f"Nasdaq B&H ({benchmark['total_return']:.0%})",
+                linewidth=2, linestyle='--', color='gray')
+    
+    # 資金注入標記
+    for log in result['injection_log']:
+        ax.axvline(x=log['date'], color='blue', linestyle=':', alpha=0.5)
+        
+    # 買入訊號
+    if result.get('buy_signals'):
+        buy_dates = [s[0] for s in result['buy_signals']]
+        buy_values = [equity_df.loc[d, 'value'] if d in equity_df.index else None for d in buy_dates]
+        valid = [(d, v) for d, v in zip(buy_dates, buy_values) if v is not None]
+        if valid:
+            dates, values = zip(*valid)
+            ax.scatter(dates, values, marker='^', color='green', s=80, zorder=5, label='Buy')
+            
+    # 賣出訊號
+    if result.get('sell_signals'):
+        sell_dates = [s[0] for s in result['sell_signals']]
+        sell_values = [equity_df.loc[d, 'value'] if d in equity_df.index else None for d in sell_dates]
+        valid = [(d, v) for d, v in zip(sell_dates, sell_values) if v is not None]
+        if valid:
+            dates, values = zip(*valid)
+            ax.scatter(dates, values, marker='v', color='red', s=80, zorder=5, label='Sell')
+            
+    ax.axhline(y=result['total_injected'], color='black', linestyle=':', alpha=0.3, 
+               label=f"Total Injected (${result['total_injected']:,.0f})")
+               
+    ax.set_title(f'{ticker} HGB Walk-Forward Daily Follow ({start_date} ~ {end_date})', fontsize=14)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Portfolio Value ($)')
+    ax.legend(loc='upper left', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(bottom=0)
+    
+    plt.tight_layout()
+    chart_path = os.path.join(output_dir, "equity_curve.png")
+    plt.savefig(chart_path, dpi=150, bbox_inches='tight')
+    plt.close()
 
 # =============================================================================
 # 主程式
@@ -455,15 +566,16 @@ def main():
             pd.DataFrame(res['trades_list']).to_csv(os.path.join(tk_dir, "trades.csv"), index=False)
             
             with open(os.path.join(tk_dir, "summary.json"), "w") as f:
-                json.dump({k: v for k, v in res.items() if k not in ['equity_df', 'trades_list']}, f, indent=4)
+                json.dump({k: v for k, v in res.items() if k not in ['equity_df', 'trades_list', 'injection_log', 'buy_signals', 'sell_signals']}, f, indent=4)
                 
-            # Plot
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(res['equity_df'].index, res['equity_df']['value'], label=f"HGB Follow ({res['total_return']:.1%})")
-            ax.set_title(f"{tk} HGB Walk-Forward Daily Follow ({args.start} ~ {args.end})")
-            ax.legend()
-            plt.savefig(os.path.join(tk_dir, "equity_curve.png"), dpi=100)
-            plt.close()
+            # 計算 Benchmark
+            bench_df_idx = benchmark_df.copy()
+            if 'date' in bench_df_idx.columns:
+                bench_df_idx.set_index('date', inplace=True)
+            bench_res = calculate_nasdaq_benchmark(bench_df_idx, args.start, args.end)
+            
+            # 繪製美化的曲線圖
+            plot_equity_curve(res, bench_res, tk_dir, tk, args.start, args.end)
             
             all_summaries.append({
                 "ticker": tk, "profile": profile_name, "trades": res['trades'],
