@@ -258,6 +258,20 @@ python scripts/train_sklearn_classifier.py --dry-run
 - **輸出包含**:
   模型將輸出於 `output_sklearn/run_{model}_{target_days}d_{datetime}/`，涵蓋 Precision/Recall, AUROC, AUPRC, Threshold Sweep 以及 `metrics.json` 中的各特徵重要性 (Feature Importances)。
 
+### 3. Walk-Forward (Rolling) 訓練對抗 Regime Shift
+
+針對容易發生「**特徵意義反轉**（如 2019-2022 年間高分預測反而低勝率）」的問題，專案提供了 `scripts/train_rolling_hgb.py`，支援「每年用過去 N 年的特徵」重新訓練、隔年全量資料驗證的嚴格迴測。
+
+```bash
+# 針對 GOOGL 使用前 5 年資料滾動訓練以預測 120天 20%
+python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 5 --target-days 120 --target-return 0.20
+
+# 限定驗證範圍並加入防呆檢查 (不執行)
+python scripts/train_rolling_hgb.py --tickers GOOGL --val-years 2019 2020 2021 2022 --dry-run
+```
+
+腳本會在 `output_rolling_hgb/` 輸出完整的 `rolling_summary.csv`。此總表不僅能追蹤每年的真實可用樣本邊界，更新增了 **Top 5% Hit Rate by Proba** 比較，若發現反向，將自動觸發 `reversal_warning` 以供後續診斷。
+
 ---
 
 ## PPO 離線單步推論評估
@@ -499,9 +513,11 @@ ptrl-v02/
 ├── sensitivity_analysis.py         # 參數敏感度分析
 ├── scripts/                        # 獨立分析與訓練工具
 │   ├── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
+│   ├── train_rolling_hgb.py        # Walk-Forward 滾動時間窗訓練
 │   ├── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
 │   ├── predict_today.py            # 日常買點預測推論工具
 │   └── analyze_topk_feature_shifts.py # 特徵翻轉與 Regime Shift 診斷
+├── src/train/sklearn_utils.py      # 共用的 sklearn 指標與類別轉換工具
 ├── models_v5/                      # 模型儲存
 ├── output_sklearn/                 # sklearn 訓練結果輸出
 ├── output_eval_ppo/                # PPO 離線推論評估輸出
