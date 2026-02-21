@@ -309,7 +309,7 @@ python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --t
 python scripts/train_rolling_hgb.py --tickers TSM `
   --window-years 3 --target-days 120 --target-return 0.20 `
   --use-regime-features --reversal-gap-margin 0.10 `
-  --hgb-reg-preset regularized `
+  --hgb-reg-preset regularized --output-dir output_rolling_tsm_v3 `
   --seed 42
 ```
 
