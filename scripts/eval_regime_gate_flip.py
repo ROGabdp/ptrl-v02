@@ -33,8 +33,10 @@ except ImportError:
 def parse_args():
     parser = argparse.ArgumentParser(description="Regime Gate Flip 離線評估腳本")
     parser.add_argument('--ticker', type=str, default='GOOGL', help="目標股票 (預設: GOOGL)")
-    parser.add_argument('--pred-dir', type=str, required=True, 
-                        help="指向特定 window year 的 rolling 輸出目錄 (例如 output_rolling_grid/RUN_NAME/windows/w3)")
+    parser.add_argument('--pred-dir', type=str, help="[向前相容] 指向單一 window year 的 rolling 輸出目錄")
+    parser.add_argument('--pred-dirs', type=str, nargs='+', help="直接指定多個 rolling 輸出目錄 (例如: windows/w3 windows/w5)")
+    parser.add_argument('--base-dir', type=str, help="基礎目錄 (例如 output_rolling_grid/RUN_NAME/windows)")
+    parser.add_argument('--windows', type=str, nargs='+', help="搭配 base-dir 使用，指定要評估的 window_years (例如 3 5 7)")
     parser.add_argument('--topk-pct', type=float, default=5.0, help="評估 Top K% 的 Hitachi Rate (預設: 5.0)")
     parser.add_argument('--output-dir', type=str, default='output_gate_eval', help="輸出目錄")
     parser.add_argument('--no-cache', action='store_true', help="強制重新擷取歷史資料")
@@ -55,6 +57,22 @@ def get_topk_hit_rate(df, score_col, target_col='y_true', k_pct=0.05):
 def main():
     args = parse_args()
     
+    pred_dirs_dict = {}
+    if args.base_dir and args.windows:
+        for w in args.windows:
+            label = f"w{w}" if not str(w).startswith("w") else str(w)
+            pred_dirs_dict[label] = os.path.join(args.base_dir, label)
+    elif args.pred_dirs:
+        for d in args.pred_dirs:
+            label = os.path.basename(os.path.normpath(d))
+            pred_dirs_dict[label] = d
+    elif args.pred_dir:
+        label = os.path.basename(os.path.normpath(args.pred_dir))
+        pred_dirs_dict[label] = args.pred_dir
+    else:
+        print("❌ 請提供 --pred-dirs, 或者 --base-dir 加上 --windows")
+        sys.exit(1)
+
     # 1. 取得 Benchmark 歷史資料並計算 Gate 狀態
     print(f"📦 正在獲取 Benchmark ({BENCHMARK}) 最新資料以計算 Regime Gates...")
     all_data = fetch_all_stock_data()
@@ -65,131 +83,130 @@ def main():
          
     df_bmk_features = compute_gate_features(benchmark_df)
     df_gates = apply_regime_gates(df_bmk_features)
-    # 日期正規化，為了後續跟 val_predictions merge
     df_gates['date'] = pd.to_datetime(df_gates['date']).dt.strftime('%Y-%m-%d')
-    
-    # 2. 掃描 `--pred-dir` 下的個別年份子目錄
-    search_path = os.path.join(args.pred_dir, f"{args.ticker}_*")
-    year_dirs = sorted(glob(search_path))
-    
-    if not year_dirs:
-        print(f"❌ 找不到任何年份的預測資料。檢查目錄: {search_path}")
-        sys.exit(1)
-        
-    print(f"🔍 找到 {len(year_dirs)} 個驗證年份，開始進行 Gate Flip 測試 (Top {args.topk_pct}%)")
     
     k_pct = args.topk_pct / 100.0
     gate_names = ['Gate_A', 'Gate_B', 'Gate_C', 'Gate_D']
-    master_summary = []
-    
-    for y_dir in year_dirs:
-        val_csv = os.path.join(y_dir, "val_predictions.csv")
-        metrics_json = os.path.join(y_dir, "metrics.json")
-        param_json = os.path.join(y_dir, "params.json")
-        
-        if not os.path.exists(val_csv):
-            continue
-            
-        df_pred = pd.read_csv(val_csv)
-        if len(df_pred) == 0:
-            continue
-            
-        # 讀取原本存入的資訊 (主要是年分與 roc-auc 用來參考)
-        with open(param_json, 'r', encoding='utf-8') as f:
-             params = json.load(f)
-             val_y = params.get('val_year')
-             val_n = params.get('val_samples')
-             val_pos = params.get('val_pos_rate')
-             
-        # Normalize date
-        df_pred['date_str'] = pd.to_datetime(df_pred['date']).dt.strftime('%Y-%m-%d')
-        
-        # Merge gates into predictions
-        df_merged = pd.merge(df_pred, df_gates, left_on='date_str', right_on='date', how='inner')
-        if len(df_merged) == 0:
-            print(f"⚠️ {val_y} 找不到任何符合基準日期的 Gate 數據，跳過。")
-            continue
-            
-        # 計算 Baseline
-        hit_proba = get_topk_hit_rate(df_merged, 'y_proba', 'y_true', k_pct)
-        df_merged['inv_proba'] = 1.0 - df_merged['y_proba']
-        hit_invproba = get_topk_hit_rate(df_merged, 'inv_proba', 'y_true', k_pct)
-        
-        # 若 inv_proba 的命中率比正向高出任何一點 (或高過 10%) 就代表原始預測出現反轉
-        reversal_warning_orig = hit_invproba > hit_proba
-        
-        # 針對每一種 Gate 進行 Score Flip
-        row_data = {
-            'year': val_y,
-            'n_val': val_n,
-            'pos_rate': val_pos,
-            'topk_hit_proba': hit_proba,
-            'topk_hit_invproba': hit_invproba,
-            'reversal_warning_orig': reversal_warning_orig
-        }
-        
-        # 動態計算各種 Gate
-        for g in gate_names:
-             # 如果狀態是 normal，保持原本機率；如果是 reversal 就 1 - y_proba
-             g_score_col = f'score_flip_{g}'
-             df_merged[g_score_col] = np.where(df_merged[g] == 'normal', 
-                                               df_merged['y_proba'], 
-                                               1.0 - df_merged['y_proba'])
-             
-             hit_flip = get_topk_hit_rate(df_merged, g_score_col, 'y_true', k_pct)
-             row_data[f'topk_hit_{g}'] = hit_flip
-             
-             # 算算這一年這個 Gate "救回" 多少 hit rate
-             # 相對於原本如果單純信任 proba 的改變幅度
-             row_data[f'improv_{g}'] = hit_flip - hit_proba
-             
-             # 該Gate發動翻轉的日數比例
-             flip_ratio = (df_merged[g] == 'reversal').mean()
-             row_data[f'flip_ratio_{g}'] = flip_ratio
-             
-        master_summary.append(row_data)
+    master_summary_long = []
 
-    if not master_summary:
-        print("❌ 沒有完成任何年份的彙整計算。")
+    print(f"\n🚀 開始進行 Gate Flip 評估 (Top {args.topk_pct}%)")
+    print(f"目標 Windows: {list(pred_dirs_dict.keys())}")
+
+    # 2. 掃描各個 window 目錄
+    for window_label, pred_dir in pred_dirs_dict.items():
+        search_path = os.path.join(pred_dir, f"{args.ticker}_*")
+        year_dirs = sorted(glob(search_path))
+        
+        if not year_dirs:
+            print(f"  ⚠️ [{window_label}] 找不到任何預測資料，跳過。路徑: {pred_dir}")
+            continue
+            
+        print(f"\n🌀 處理 Window: {window_label} | 找到 {len(year_dirs)} 個驗證年份")
+        
+        for y_dir in year_dirs:
+            val_csv = os.path.join(y_dir, "val_predictions.csv")
+            param_json = os.path.join(y_dir, "params.json")
+            
+            if not os.path.exists(val_csv):
+                continue
+                
+            df_pred = pd.read_csv(val_csv)
+            if len(df_pred) == 0:
+                continue
+                
+            with open(param_json, 'r', encoding='utf-8') as f:
+                 params = json.load(f)
+                 val_y = params.get('val_year')
+                 val_n = params.get('val_samples')
+                 val_pos = params.get('val_pos_rate')
+                 
+            df_pred['date_str'] = pd.to_datetime(df_pred['date']).dt.strftime('%Y-%m-%d')
+            
+            df_merged = pd.merge(df_pred, df_gates, left_on='date_str', right_on='date', how='inner')
+            if len(df_merged) == 0:
+                print(f"  ⚠️ {window_label} - {val_y} 無法與大盤日期對齊，跳過。")
+                continue
+                
+            hit_proba = get_topk_hit_rate(df_merged, 'y_proba', 'y_true', k_pct)
+            df_merged['inv_proba'] = 1.0 - df_merged['y_proba']
+            hit_invproba = get_topk_hit_rate(df_merged, 'inv_proba', 'y_true', k_pct)
+            
+            reversal_warning_orig = hit_invproba > hit_proba
+            
+            row_data = {
+                'window_years': window_label,
+                'year': val_y,
+                'n_val': val_n,
+                'pos_rate': val_pos,
+                'topk_hit_proba': hit_proba,
+                'topk_hit_invproba': hit_invproba,
+                'reversal_warning_orig': reversal_warning_orig
+            }
+            
+            for g in gate_names:
+                 g_score_col = f'score_flip_{g}'
+                 g_inv_score_col = f'inv_score_flip_{g}'
+                 
+                 # 翻轉邏輯
+                 df_merged[g_score_col] = np.where(df_merged[g] == 'normal', 
+                                                   df_merged['y_proba'], 
+                                                   1.0 - df_merged['y_proba'])
+                 df_merged[g_inv_score_col] = 1.0 - df_merged[g_score_col]
+                 
+                 hit_flip = get_topk_hit_rate(df_merged, g_score_col, 'y_true', k_pct)
+                 hit_inv_flip = get_topk_hit_rate(df_merged, g_inv_score_col, 'y_true', k_pct)
+                 
+                 row_data[f'topk_hit_{g}'] = hit_flip
+                 row_data[f'improv_{g}'] = hit_flip - hit_proba
+                 row_data[f'flip_ratio_{g}'] = (df_merged[g] == 'reversal').mean()
+                 row_data[f'reversal_after_{g}'] = hit_inv_flip > hit_flip
+                 
+            master_summary_long.append(row_data)
+
+    if not master_summary_long:
+        print("\n❌ 沒有完成任何年份的彙整計算。")
         sys.exit(0)
         
-    df_sum = pd.DataFrame(master_summary)
-    
-    # 建立輸出結果目錄
+    df_long = pd.DataFrame(master_summary_long)
     os.makedirs(args.output_dir, exist_ok=True)
-    out_csv = os.path.join(args.output_dir, f"gate_eval_summary_{args.ticker}.csv")
-    df_sum.to_csv(out_csv, index=False)
     
-    print(f"\n{'='*80}\n✅ Regime Gate Flip 離線評估完成！\n{'='*80}")
+    # 輸出長表 (By Window Year)
+    out_csv_long = os.path.join(args.output_dir, f"gate_eval_summary_{args.ticker}_by_window_year.csv")
+    df_long.to_csv(out_csv_long, index=False)
     
-    for g in gate_names:
-        # 計算是否改善 reversal year 數量
-        total_rev_years = df_sum['reversal_warning_orig'].sum()
+    # 3. 建立 Aggregated 彙整表
+    agg_data = []
+    for w_label, df_w in df_long.groupby('window_years'):
+        agg_row = {'window_years': w_label}
+        agg_row['n_years_eval'] = len(df_w)
+        agg_row['mean_topk_hit_proba'] = df_w['topk_hit_proba'].mean()
+        agg_row['reversal_year_count_before'] = df_w['reversal_warning_orig'].sum()
         
-        # 計算 Gate 修正後，這一年還是不是「反過來做會更好」
-        # 理論上如果 Gate 很準，翻轉過後，你再去 inv 它一定會變差，表示當下方向是對的。
-        # 所以我們看 "如果用 flip score，再去 inv 它一次，會不會更好？"
-        # 若依舊更好，代表 Gate 沒把顛倒修正過來 (或是濫殺無辜導致新的顛倒)
-        # 這裡從簡：看平均提升勝率
-        avg_hit_orig_proba = df_sum['topk_hit_proba'].mean()
-        avg_hit_gate = df_sum[f'topk_hit_{g}'].mean()
-        avg_improv = avg_hit_gate - avg_hit_orig_proba
+        for g in gate_names:
+            agg_row[f'mean_topk_hit_{g}'] = df_w[f'topk_hit_{g}'].mean()
+            agg_row[f'reversal_year_count_after_{g}'] = df_w[f'reversal_after_{g}'].sum()
+            agg_row[f'worst_year_drop_{g}'] = df_w[f'improv_{g}'].min()
+            
+        agg_data.append(agg_row)
         
-        print(f"🔸 【{g}】 測試結果：")
-        print(f"    - 全部年度平均 Top {args.topk_pct}% 命中率: 原本 {avg_hit_orig_proba:.1%} -> 變成 {avg_hit_gate:.1%} ({avg_improv*100:+.1f}%)")
-        
-        # 觀察 2019/2023 兩個魔咒年份
-        for prob_y in [2019, 2021, 2022, 2023]:
-            if prob_y in df_sum['year'].values:
-                y_row = df_sum[df_sum['year'] == prob_y].iloc[0]
-                orig_h = y_row['topk_hit_proba']
-                gate_h = y_row[f'topk_hit_{g}']
-                imp = y_row[f'improv_{g}']
-                print(f"    - {prob_y} 表現: {orig_h:.1%} -> {gate_h:.1%} ({imp*100:+.1f}%) | 翻轉天數佔比: {y_row[f'flip_ratio_{g}']:.1%}")
-        print("-" * 50)
-        
-    print(f"\n📂 完整彙整表已輸出至: {out_csv}")
+    df_agg = pd.DataFrame(agg_data)
+    out_csv_agg = os.path.join(args.output_dir, f"gate_eval_summary_{args.ticker}_window_agg.csv")
+    df_agg.to_csv(out_csv_agg, index=False)
+    
+    print(f"\n{'='*80}\n✅ Regime Gate Flip 跨 Windows 離線評估完成！\n{'='*80}")
+    print(f"📂 詳細年度長表已輸出至: {out_csv_long}")
+    print(f"📂 Windows 綜合比較表:  {out_csv_agg}")
+    
+    print("\n📊 各 Window 彙整概覽 (Gate_C 為例):")
+    for _, row in df_agg.iterrows():
+        w = row['window_years']
+        pct_b = row['mean_topk_hit_proba'] * 100
+        pct_a = row['mean_topk_hit_Gate_C'] * 100
+        rev_b = row['reversal_year_count_before']
+        rev_a = row['reversal_year_count_after_Gate_C']
+        drop = row['worst_year_drop_Gate_C'] * 100
+        print(f"  [{w}] 勝率: {pct_b:.1f}% -> {pct_a:.1f}% | 反轉年數: {rev_b} -> {rev_a} | 最慘負改善: {drop:+.1f}%")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
