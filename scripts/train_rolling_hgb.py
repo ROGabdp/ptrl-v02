@@ -310,9 +310,8 @@ def run_rolling_training(args):
                 use_top10=(args.reversal_use_top10 == 'true')
             )
             
-            # Combo reversal warning (roc < 0.5 is also strictly bad)
-            is_roc_fail = (metrics.get('ROC-AUC') is not None) and (metrics['ROC-AUC'] < 0.5)
-            final_reversal_warning = rev_stats['reversal_warning'] or is_roc_fail
+            # Reversal warning 僅取決於 TopK Gap (V2 rule)，不再受 roc_auc 影響
+            final_reversal_warning = rev_stats['reversal_warning']
             
             print(f"  [Metric] {val_y} ROC-AUC: {metrics.get('ROC-AUC', 'N/A')}")
             print(f"  [Metric] Top5% Hit Rate by Proba: {rev_stats['top5_hit_proba']*100:.1f}%")

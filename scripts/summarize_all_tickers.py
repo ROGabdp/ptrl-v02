@@ -94,10 +94,9 @@ def main():
         if 'reversal_warning' in df_filt.columns:
             has_reversals = df_filt['reversal_warning'] == True
         else:
-            # Fallback 舊版的重算 (假設仍有 top10_gap 與 roc_auc)
+            # Fallback 舊版的重算 (假設仍有 top10_gap)
             is_gap_fail = (df_filt['top10_gap'] <= -args.reversal_gap_margin)
-            is_roc_fail = (df_filt['roc_auc'] < 0.5)
-            has_reversals = is_gap_fail | is_roc_fail
+            has_reversals = is_gap_fail
             
         rev_count = has_reversals.sum()
         rev_years = df_filt.loc[has_reversals, 'val_year'].astype(str).tolist()
