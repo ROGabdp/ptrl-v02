@@ -516,6 +516,46 @@ python scripts/predict_today.py --model-path output_sklearn/run_hgb_123/model.jo
 python scripts/predict_today.py --model-path "models_v5/finetuned/{ticker}/best/best_model.zip" --tickers NVDA MSFT TSLA
 ```
 
+### 6. 通用 HGB 歷史跟單回測系統 (Walk-Forward Daily Backtrader)
+
+為了離線驗證上述 `PctRank` 與動態風控機制的實戰成效，專案提供了 `scripts/backtest_hgb_daily_follow.py`。它能在指定區間內**徹底模擬每日實盤的情境（完全防前視，Walk-Forward）**，每天只使用過去的資料重訓模型並推論當天的出手機率。
+
+**核心特色：**
+- **自動繼承 Profile 參數**: 完美相容 `configs/rolling_profiles.json`，不同標的自動套用其專屬的預測天數、報酬目標及防禦特徵設定。
+- **動態門檻與大盤風控**: 精準還原 `predict_today.py` 中 `pct_rank_t` 的推論邏輯與 `is_high_risk` 降槓桿機制。
+- **滾動訓練 (No Lookahead)**: 自動按照 `--retrain-freq` (預設 monthly) 重新訓練 HGB 模型，絕不偷看未來的資料。
+
+**執行範例：**
+```bash
+# 針對 NVDA 與 TSLA 執行 2023 年全年度的回測
+python scripts/backtest_hgb_daily_follow.py --start 2023-01-01 --end 2023-12-31 --tickers NVDA TSLA
+
+# 完整 CLI 參數應用
+python scripts/backtest_hgb_daily_follow.py \
+  --profiles-path configs/rolling_profiles.json \
+  --start 2023-01-01 --end 2023-12-31 \
+  --tickers NVDA \
+  --retrain-freq monthly \
+  --threshold-normal 0.90 --threshold-risk 0.95 \
+  --buy-ratio-normal 0.25 --buy-ratio-risk 0.15 \
+  --output-dir backtest_results_hgb
+```
+
+**支援的 CLI 參數說明：**
+- `--start` / `--end`: 回測的起始與結束日期 (格式 YYYY-MM-DD)。
+- `--tickers`: 指定一個或多個股票代碼。若不指定則自動使用 Profiles 中的全設定。
+- `--profiles-path`: `rolling_profiles.json` 的自訂路徑，用於強載標的屬性。
+- `--retrain-freq`: 滾動重訓頻率，支援 `daily`, `monthly` (預設), `quarterly`, `yearly`。
+- `--threshold-normal` / `--threshold-risk`: 正常與高危市況下的出手分位數門檻 (預設 0.90 / 0.95)。等於 PctRank 若跑到這比例之上才會買入。
+- `--buy-ratio-normal` / `--buy-ratio-risk`: 決定資金池中投入該標的的資金比例 (預設 25% / 15%)。
+
+**輸出產物：**
+系統會在 `--output-dir` (預設 `backtest_results_hgb/`) 底下按 Ticker 和執行時間建立資料夾，裡面會留下：
+- `daily_signals.csv`: 紀錄每日的打分 (`p_t`)、歷史分位數 (`pct_rank`)、大盤風險狀態 (`is_high_risk`) 與實際 Action，非常適合用來追溯模型的診斷過程。
+- `trades.csv` / `equity_curve.csv`: 交易明細與淨值變化。
+- `equity_curve.png`: 淨值走勢圖形化報表。
+- `all_tickers_summary_...csv`: 多檔股票跑完後的橫向比較總表 (包含 CAGR, Sharpe, MDD)。
+
 ---
 
 ## 特徵飄移診斷 (Regime Shift Analytics)
@@ -705,6 +745,7 @@ ptrl-v02/
 │   ├── eval_regime_gate_flip.py    # 離線 Regime Gate 預測翻轉評估
 │   ├── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
 │   ├── predict_today.py            # 單檔自動每日即時訓練與風控推論實盤系統
+│   ├── backtest_hgb_daily_follow.py# (新增) 泛用型 HGB 歷史跟單回測系統
 │   └── analyze_topk_feature_shifts.py # 特徵翻轉與 Regime Shift 診斷
 ├── src/
 │   ├── features/
@@ -721,6 +762,7 @@ ptrl-v02/
 ├── backtest_results/               # 回測結果
 ├── backtest_results_filtered_*/    # 濾網回測結果 (依日期)
 ├── backtest_results_nvda/          # NVDA 跟單回測結果 ⭐
+├── backtest_results_hgb/           # (新增) 通用 HGB 歷史跟單回測結果
 ├── grid_search_results_nvda/       # 網格搜索結果 ⭐
 └── sensitivity_results/            # 敏感度分析結果
 ```
