@@ -63,9 +63,15 @@ def load_model_and_predict(model_path, model_type, X_input):
         
     elif model_type == "sklearn":
         model = joblib.load(model_path)
-        # sklearn predict_proba 輸出為 (n_samples, n_classes)，取 positive class [1]
-        proba = model.predict_proba(X_input)[0][1]
-        return float(proba)
+        # 動態從 model.classes_ 定位標籤為 1 (正類) 的索引，避免假設 1 永遠在 [:, 1]
+        proba_all = model.predict_proba(X_input)
+        if hasattr(model, "classes_"):
+            classes = list(model.classes_)
+            pos_idx = classes.index(1) if 1 in classes else 1
+        else:
+            pos_idx = 1
+            
+        return float(proba_all[0][pos_idx])
         
     else:
         raise ValueError(f"不認得的模型格式: {model_type}")

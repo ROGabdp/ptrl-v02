@@ -72,6 +72,24 @@ def parse_args():
     return parser.parse_args()
 
 
+def get_positive_proba(model, X, positive_label=1) -> tuple:
+    """
+    取得預測為 positive_label (預設為 1) 的機率陣列。
+    避免依賴 hard-coded 的 [:, 1]，改由 model.classes_ 動態尋找。
+    """
+    if not hasattr(model, "predict_proba"):
+        raise ValueError(f"模型 {type(model).__name__} 不支援 predict_proba()")
+        
+    proba_all = model.predict_proba(X)
+    classes = list(model.classes_)
+    
+    if positive_label not in classes:
+        raise ValueError(f"標籤 {positive_label} 不存在於 model.classes_ {classes} 中。")
+        
+    pos_idx = classes.index(positive_label)
+    return proba_all[:, pos_idx], classes, pos_idx
+
+
 def parse_date_ranges(train_ranges_arg):
     if not train_ranges_arg:
         return TRAIN_RANGES
@@ -352,10 +370,32 @@ def main():
         
     # 4. 預測與計算指標
     print("📈 正在對 Validation Subset 進行評估...")
-    y_proba_val = model.predict_proba(X_val)[:, 1]
+    try:
+        y_proba_val, clz_list, pos_idx = get_positive_proba(model, X_val, positive_label=1)
+    except Exception as e:
+        print(f"❌ 取得預測機率失敗: {e}")
+        sys.exit(1)
+        
     y_pred_val = model.predict(X_val)
     
+    # 計算正負樣本的平均機率 (Sanity Check)
+    mask_pos = (y_val == 1)
+    mask_neg = (y_val == 0)
+    mean_pos_proba = y_proba_val[mask_pos].mean() if mask_pos.sum() > 0 else 0.0
+    mean_neg_proba = y_proba_val[mask_neg].mean() if mask_neg.sum() > 0 else 0.0
+    
+    proba_direction_warning = False
+    if mean_pos_proba < mean_neg_proba:
+        print(f"  ⚠️ [WARNING] 正樣本的平均預測機率 ({mean_pos_proba:.4f}) 小於 負樣本 ({mean_neg_proba:.4f})！")
+        print("     這可能暗示分類器的學習結果方向相反，或正類被錯誤對應。ROC-AUC 可能 < 0.5。")
+        proba_direction_warning = True
+    
     metrics = calc_metrics(y_val, y_proba_val, y_pred_val, prefix="Pooled Overall")
+    metrics['Sanity Check'] = {
+        'mean_pos_proba': float(mean_pos_proba),
+        'mean_neg_proba': float(mean_neg_proba),
+        'proba_direction_warning': proba_direction_warning
+    }
     
     # 計算 Feature Importances
     importances = get_feature_importances(model, args.model, X_val, y_val)
@@ -379,7 +419,9 @@ def main():
         "train_samples_balanced": len(df_train_b),
         "val_samples": len(df_val),
         "impl_details": {
-            "balance_application": "sample_weight passed to fit" if sample_weight is not None else ("class_weight arg passed" if args.balance_train == "class_weight_balanced" else args.balance_train)
+            "balance_application": "sample_weight passed to fit" if sample_weight is not None else ("class_weight arg passed" if args.balance_train == "class_weight_balanced" else args.balance_train),
+            "model_classes": [int(c) for c in clz_list],
+            "positive_class_index": int(pos_idx)
         }
     }
     with open(os.path.join(run_dir, "params.json"), "w", encoding="utf-8") as f:

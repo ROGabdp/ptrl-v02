@@ -624,7 +624,7 @@ def clear_cache():
     """清除特徵快取"""
     print("\n[Cache] Clearing feature cache...")
     if os.path.exists(CACHE_DIR):
-        pkl_files = glob.glob(os.path.join(CACHE_DIR, "*_ustech.pkl"))
+        pkl_files = glob.glob(os.path.join(CACHE_DIR, "*_ustech*.pkl"))
         for f in pkl_files:
             try:
                 os.remove(f)
