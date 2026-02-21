@@ -208,12 +208,7 @@ def run_rolling_training(args):
     
     for ticker in args.tickers:
         print(f"\n{'='*80}\n🚀 打開 Walk-Forward 引擎: Ticker = {ticker}\n{'='*80}")
-        try:
-            df_full, benchmark_df = prepare_dataset_for_ticker(ticker, args.target_days, args.target_return, use_cache, all_raw_data)
-        except Exception as e:
-            print(f"❌ 初始化 {ticker} 資料失敗: {e}")
-            continue
-            
+        
         # 決定此 Ticker 的 Profile 設定
         profile = {}
         profile_name = "cli_args"
@@ -234,6 +229,17 @@ def run_rolling_training(args):
         reversal_margin = profile.get('reversal_gap_margin', getattr(args, 'reversal_gap_margin', 0.10))
         reversal_use_top10 = profile.get('reversal_use_top10', getattr(args, 'reversal_use_top10', 'true'))
         
+        # 允許 Profile 覆寫 target_days 與 target_return
+        ticker_target_days = profile.get('target_days', args.target_days)
+        ticker_target_return = profile.get('target_return', args.target_return)
+        ticker_run_name = f"run_hgb_{ticker_target_days}d_{timestamp}"
+        
+        try:
+            df_full, benchmark_df = prepare_dataset_for_ticker(ticker, ticker_target_days, ticker_target_return, use_cache, all_raw_data)
+        except Exception as e:
+            print(f"❌ 初始化 {ticker} 資料失敗: {e}")
+            continue
+            
         # 處理 Regime Features 整合
         active_feature_cols = FEATURE_COLS.copy()
         if regime_profile in ['bm_only', 'bm_plus_stock']:
@@ -387,8 +393,8 @@ def run_rolling_training(args):
             # --- 建立單份結果的 Params dict ---
             epoch_params = {
                 'ticker': ticker,
-                'run_name': run_name,
-                'target_definition': f"Next_{args.target_days}d_Max >= {args.target_return}",
+                'run_name': ticker_run_name,
+                'target_definition': f"Next_{ticker_target_days}d_Max >= {ticker_target_return}",
                 'val_year': val_y,
                 'requested_train_range': [req_train_start, req_train_end],
                 'actual_train_range': [actual_tr_min, actual_tr_max],
