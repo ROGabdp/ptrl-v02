@@ -262,18 +262,13 @@ python scripts/train_sklearn_classifier.py --dry-run
 
 針對容易發生「**特徵意義反轉**（如 2019-2022 年間高分預測反而低勝率）」的問題，專案提供了 `scripts/train_rolling_hgb.py`，支援「每年用過去 N 年的特徵」重新訓練、隔年全量資料驗證的嚴格迴測。
 
-```bash
-### 實例 1：基本使用與 TSM 專屬掛載
+#### 實例 1：基本使用
 
-若想針對單一標的（例如 TSM）跑 3 年窗口、目標 120 天漲幅 20%，並啟用全套的 Regime 特徵與 HGB 正規化網格以解決近兩年反向問題：
+若想針對單一標的（例如 GOOGL）跑 5 年窗口、目標 120 天漲幅 20%：
 
 ```bash
-python scripts/train_rolling_hgb.py --tickers TSM \
-  --window-years 3 --target-days 120 --target-return 0.20 \
-  --use-regime-features --reversal-gap-margin 0.10 \
-  --hgb-reg-preset regularized \
-  --seed 42
-```
+python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 5 --target-days 120 --target-return 0.20
+
 # 限定驗證範圍並加入防呆檢查 (不執行)
 python scripts/train_rolling_hgb.py --tickers GOOGL --val-years 2019 2020 2021 2022 --dry-run
 ```
@@ -296,22 +291,26 @@ python scripts/compare_rolling_summaries.py --baseline output_rolling_baseline/r
 python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --target-days 120 --target-return 0.20
 ```
 
-#### 進階防禦：自我學習 Regime Feature (推薦)
+#### 進階防禦：大盤與個股 Regime Feature 雙重掛載與 HGB 正規化 (推薦)
 
-為了讓模型能主動意識到目前所處的市場狀態（如空頭、高波動等）避免在反轉年失效，執行 Rolling Training 時強烈建議加上 `--use-regime-features` 開關。
+為了讓模型能主動意識到目前所處的市場狀態（如空頭、高波動等）避免在反轉年失效，執行 Rolling Training 時強烈建議加上 `--use-regime-features` 開關。同時，為了壓制空頭強勢段（如 2022 年）所產生的模型預測分數過度自信飽和情況，建議掛載 `--hgb-reg-preset regularized` 開關（自動啟用 `min_samples_leaf=50, max_depth=3, l2=0.1`）降低決策樹敏感度。
 
-這項參數會自動提取專案中的 `BENCHMARK` 大盤指數（如 ^IXIC），計算以下特徵並在 **不修改原生 `FEATURE_COLS`** 的前提下，動態掛載給 HGB 模型：
-1. **Trend**: 大盤是否在 200 日均線之上 (`MA200_ABOVE`) 及 均線斜率 (`MA200_SLOPE`)
-2. **Volatility**: 20 日年化波動率 (`HV20`) 及其在過去 3 年的百分位數階層 (`HV20_PCTL`)
-3. **Momentum**: 中長期 60日 / 120日 的絕對報酬率
+`--use-regime-features` 參數會自動提取專案中的 `BENCHMARK` 大盤指數（如 ^IXIC）以及 **個股歷史股價**，計算以下特徵動態掛載給 HGB 模型：
+1. **大盤趨勢 (Trend)**: 大盤是否在 200 日均線之上 (`MA200_ABOVE`) 及 均線斜率 (`MA200_SLOPE`)
+2. **大盤波動率 (Benchmark Volatility)**: 大盤 20 日年化波動率 (`HV20`) 及其在過去 3 年的歷史百分位數 (`HV20_PCTL`)
+3. **大盤動能 (Benchmark Momentum)**: 大盤中長期 60日 / 120日 的絕對報酬率
+4. **個股獨立防禦 (Stock-Specific Regime)**:
+   - 個股獨立 20 日波動率 (`HV20`) 與其過去三年歷史百分位。
+   - 個股相對於大盤基準的 120 日動能強弱差 (`RS120`)。
+   - 個股嚴重乖離/極端過熱標記 (`EXTREME_DIST_MA240_FLAG`)。
 
-**執行範例 (比較對照)：**
-```bash
-# 1. 計算 Baseline (純個股特徵)
-python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 3 --target-days 120 --target-return 0.20 --output-dir output_rolling_baseline --seed 42
-
-# 2. 加入 Regime Features (自學大盤環境)
-python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 3 --target-days 120 --target-return 0.20 --use-regime-features --output-dir output_rolling_w_feat --seed 42
+**執行範例 (針對 TSM 佈署完整抗跌配備)：**
+```powershell
+python scripts/train_rolling_hgb.py --tickers TSM `
+  --window-years 3 --target-days 120 --target-return 0.20 `
+  --use-regime-features --reversal-gap-margin 0.10 `
+  --hgb-reg-preset regularized `
+  --seed 42
 ```
 
 **驗收與觀察點：**
