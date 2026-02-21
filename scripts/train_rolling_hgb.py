@@ -15,6 +15,7 @@ if ROOT_DIR not in sys.path:
 
 from src.train.sklearn_utils import get_positive_proba, apply_class_balancing, get_model, calc_metrics
 from src.features.regime_features import compute_regime_features, REGIME_COLS
+from src.features.regime_features_stock import compute_stock_regime_features, STOCK_REGIME_COLS
 
 try:
     from train_us_tech_buy_agent import fetch_all_stock_data, calculate_features, FEATURE_COLS, BENCHMARK
@@ -43,6 +44,8 @@ def parse_args():
     
     # 模型超參數與行為
     parser.add_argument('--model', type=str, default='hgb', choices=['hgb'], help="目前實作專注於 HGB")
+    parser.add_argument('--hgb-reg-preset', type=str, default='default', choices=['default', 'regularized'], 
+                        help="HGB 初始化之正則網格 (default 或 regularized)")
     parser.add_argument('--seed', type=int, default=42, help="亂數種子")
     parser.add_argument('--balance-train', type=str, default='none', 
                         choices=['none', 'undersample_50_50', 'class_weight_balanced'],
@@ -199,18 +202,25 @@ def run_rolling_training(args):
         # 處理 Regime Features 整合
         active_feature_cols = FEATURE_COLS.copy()
         if getattr(args, 'use_regime_features', False):
-            print("🧲 啟動 Regime Features (HGB 自研防禦), 準備結合大盤特徵...")
+            print("🧲 啟動 Regime Features (HGB 自研防禦), 準備結合大盤與個股特徵...")
             df_regime = compute_regime_features(benchmark_df)
+            
+            # 從原資料借出 raw 算 TSM 特定特徵 (不受 drops 失真影響)
+            from train_us_tech_buy_agent import fetch_all_stock_data
+            raw_df = fetch_all_stock_data()[ticker]
+            df_stock_regime = compute_stock_regime_features(raw_df, benchmark_df)
             
             # 建立 Date Str 以供 Merge
             if 'date_str' not in df_full.columns:
                 df_full['date_str'] = pd.to_datetime(df_full['date']).dt.strftime('%Y-%m-%d')
                 
-            # 將 df_regime (已經有 date string) Merge 起來
+            # 將 df_regime 與 df_stock_regime Merge 起來
             df_full = pd.merge(df_full, df_regime, left_on='date_str', right_on='date', how='inner', suffixes=('', '_regime'))
+            df_full = pd.merge(df_full, df_stock_regime, left_on='date_str', right_on='date', how='inner', suffixes=('', '_stock'))
+            
             # 重新 Dropna 保障新特徵沒有洞 (大盤最前面會有歷史長度的洞)
-            df_full = df_full.dropna(subset=REGIME_COLS).copy()
-            active_feature_cols += REGIME_COLS
+            df_full = df_full.dropna(subset=REGIME_COLS + STOCK_REGIME_COLS).copy()
+            active_feature_cols += REGIME_COLS + STOCK_REGIME_COLS
             print(f"   => 合併完成, X 變數從 {len(FEATURE_COLS)} 增長為 {len(active_feature_cols)} 個。")
             
         val_years = extract_val_years(df_full, args)
@@ -277,6 +287,11 @@ def run_rolling_training(args):
             
             # --- 訓練與推論 ---
             model, use_sample_weight = get_model(args.model, args.balance_train, args.seed)
+            
+            if getattr(args, 'hgb_reg_preset', 'default') == 'regularized' and type(model).__name__ == 'HistGradientBoostingClassifier':
+                print("  [Train] 🔧 啟動 HGB 正則化參數 (min_samples_leaf=50, max_depth=3, l2=0.1)")
+                model.set_params(min_samples_leaf=50, max_depth=3, l2_regularization=0.1)
+                
             print("  [Train] 正在訓練模型 (Random State 固定)...")
             
             if use_sample_weight:
@@ -349,12 +364,13 @@ def run_rolling_training(args):
                 'val_pos_rate': float(va_pos_r),
                 'window_years': args.window_years,
                 'seed': args.seed,
+                'hgb_reg_preset': getattr(args, 'hgb_reg_preset', 'default'),
                 'model_class': type(model).__name__,
                 'model_params': model.get_params(),
                 'balance_train': args.balance_train,
                 'used_balancing_method': used_balancing_method,
                 'use_regime_features': getattr(args, 'use_regime_features', False),
-                'regime_cols': REGIME_COLS if getattr(args, 'use_regime_features', False) else [],
+                'regime_cols': (REGIME_COLS + STOCK_REGIME_COLS) if getattr(args, 'use_regime_features', False) else [],
                 'reversal_rule_version': 'v2',
                 'reversal_gap_margin': args.reversal_gap_margin,
                 'reversal_check_top10': args.reversal_use_top10
@@ -373,6 +389,11 @@ def run_rolling_training(args):
                     'regime_hv20_pctl_p50': df_val['REGIME_BM_HV20_PCTL'].median(),
                     'regime_ret_120_mean': df_val['REGIME_BM_RET_120'].mean(),
                     'regime_ret_60_mean': df_val['REGIME_BM_RET_60'].mean(),
+                    'stock_hv20_pctl_mean': df_val['REGIME_STOCK_HV20_PCTL'].mean(),
+                    'stock_hv20_pctl_p50': df_val['REGIME_STOCK_HV20_PCTL'].median(),
+                    'stock_rs120_mean': df_val['REGIME_STOCK_RS120'].mean(),
+                    'stock_rs120_p50': df_val['REGIME_STOCK_RS120'].median(),
+                    'extreme_dist_rate': df_val['REGIME_EXTREME_DIST_MA240_FLAG'].mean(),
                 }
             
             # 準備 Master 這一行的 Data

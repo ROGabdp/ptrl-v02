@@ -263,9 +263,17 @@ python scripts/train_sklearn_classifier.py --dry-run
 針對容易發生「**特徵意義反轉**（如 2019-2022 年間高分預測反而低勝率）」的問題，專案提供了 `scripts/train_rolling_hgb.py`，支援「每年用過去 N 年的特徵」重新訓練、隔年全量資料驗證的嚴格迴測。
 
 ```bash
-# 針對 GOOGL 使用前 5 年資料滾動訓練以預測 120天 20%
-python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 5 --target-days 120 --target-return 0.20
+### 實例 1：基本使用與 TSM 專屬掛載
 
+若想針對單一標的（例如 TSM）跑 3 年窗口、目標 120 天漲幅 20%，並啟用全套的 Regime 特徵與 HGB 正規化網格以解決近兩年反向問題：
+
+```bash
+python scripts/train_rolling_hgb.py --tickers TSM \
+  --window-years 3 --target-days 120 --target-return 0.20 \
+  --use-regime-features --reversal-gap-margin 0.10 \
+  --hgb-reg-preset regularized \
+  --seed 42
+```
 # 限定驗證範圍並加入防呆檢查 (不執行)
 python scripts/train_rolling_hgb.py --tickers GOOGL --val-years 2019 2020 2021 2022 --dry-run
 ```
@@ -334,10 +342,14 @@ python scripts/run_rolling_all_tickers.py `
   --output-dir output_rolling_all `
   --window-years 3 --target-days 120 --target-return 0.20 `
   --use-regime-features --reversal-gap-margin 0.10 `
+  --hgb-reg-preset regularized `
   --val-years 2018 2019 2020 2021 2022 2023 2024 2025 `
   --max-workers 2 `
   --seed 42
 ```
+- `--use-regime-features`：掛載大盤（SPY/QQQ）總體經濟特徵，以及針對個別股票（如 TSM）的自身波動率與相對強度（RS120）特徵，幫助模型迴避市場崩盤與極端乖離段。
+- `--hgb-reg-preset`：(新增) 提供 HGB 決策樹的正規化微調，可選 `default` 或 `regularized` (強啟動 min_samples_leaf=50, max_depth=3, l2=0.1)，幫助壓制如 2022 年空頭年的分數過度飽和現象。
+- `--reversal-gap-margin`：容忍的 Hit-Gap 誤差值 (預設 0.10)。
 這會在 `output_rolling_all/` 底下自動建立各個 Ticker 的專屬資料夾，並寫入該股各自的 `rolling_summary.csv` 與每個年份的 Metrics。
 
 #### (2) 彙整全股票超級總表
