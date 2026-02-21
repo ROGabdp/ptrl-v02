@@ -285,6 +285,17 @@ python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --t
 1. 為每一組 `window_years` 保留獨立的年份預測輸出至 `windows/wX/`
 2. 自動產出 `grid_summary.csv`，列舉各個 `window_years` 的 `mean_roc_auc`、反向發生次數 `reversal_year_count` 以及最糟表現年度，方便一眼選出最抗跌的滑動區間。
 
+### 5. Regime Gate 離線防禦評估
+
+在 Rolling 網格搜尋完成後，我們可以使用 `scripts/eval_regime_gate_flip.py` 來進行離線 Regime Gate 驗證。透過大盤 (Benchmark) 特徵判斷市況，將測出為 "Reversal Regime" 時期的預測分數反轉 (`1 - y_proba`)，以此拯救模型在極端反向年（如 2019 或 2022）的預測失靈。
+
+```bash
+# 對已經跑好的 GOOGL w5 rolling 預測結果進行 Regime Gate 評估 (評估 Top 5% 命中率變化)
+python scripts/eval_regime_gate_flip.py --ticker GOOGL --pred-dir output_rolling_grid/GOOGL_120d20pct_.../windows/w5 --topk-pct 5
+```
+
+會輸出 `output_gate_eval/gate_eval_summary_{TICKER}.csv` 總表，包含 4 種 Gate 邏輯（Trend, Volatility, Momentum, Combo）相較於原始預測的命中率 (Precision@k) 提升幅度與發動反轉的比例，方便您判斷哪種市況濾網最適合目前的目標策略。
+
 ---
 
 ## PPO 離線單步推論評估
@@ -528,6 +539,7 @@ ptrl-v02/
 │   ├── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
 │   ├── train_rolling_hgb.py        # Walk-Forward 滾動時間窗訓練
 │   ├── run_rolling_grid.py         # Window Years 自動網格搜尋與統整
+│   ├── eval_regime_gate_flip.py    # 離線 Regime Gate 預測翻轉評估
 │   ├── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
 │   ├── predict_today.py            # 日常買點預測推論工具
 │   └── analyze_topk_feature_shifts.py # 特徵翻轉與 Regime Shift 診斷
