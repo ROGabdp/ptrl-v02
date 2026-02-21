@@ -527,8 +527,8 @@ python scripts/predict_today.py --model-path "models_v5/finetuned/{ticker}/best/
 
 **執行範例：**
 ```bash
-# 針對 NVDA 與 TSLA 執行 2023 年全年度的回測
-python scripts/backtest_hgb_daily_follow.py --start 2023-01-01 --end 2023-12-31 --tickers NVDA TSLA
+# 針對 NVDA, TSM, GOOGL 執行 2017-10-16 ~ 2023-10-15 的回測
+python scripts/backtest_hgb_daily_follow.py --start 2017-10-16 --end 2023-10-15 --tickers NVDA TSM GOOGL
 
 # 完整 CLI 參數應用
 python scripts/backtest_hgb_daily_follow.py `
