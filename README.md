@@ -279,15 +279,28 @@ python scripts/train_rolling_hgb.py --tickers GOOGL --val-years 2019 2020 2021 2
 python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --target-days 120 --target-return 0.20
 ```
 
-#### 進階防禦：自我學習 Regime Feature
-為了讓模型能主動意識到目前所處的市場狀態（如空頭、高波動等）避免在反轉年失效，執行 Rolling Training 可以加上 `--use-regime-features`，會自動將 `src/features/regime_features.py` 內定義的大盤指標 (MA200、年化波動率百分位數、中長線報酬等) 當成特徵餵給模型學習。
+#### 進階防禦：自我學習 Regime Feature (推薦)
 
+為了讓模型能主動意識到目前所處的市場狀態（如空頭、高波動等）避免在反轉年失效，執行 Rolling Training 時強烈建議加上 `--use-regime-features` 開關。
+
+這項參數會自動提取專案中的 `BENCHMARK` 大盤指數（如 ^IXIC），計算以下特徵並在 **不修改原生 `FEATURE_COLS`** 的前提下，動態掛載給 HGB 模型：
+1. **Trend**: 大盤是否在 200 日均線之上 (`MA200_ABOVE`) 及 均線斜率 (`MA200_SLOPE`)
+2. **Volatility**: 20 日年化波動率 (`HV20`) 及其在過去 3 年的百分位數階層 (`HV20_PCTL`)
+3. **Momentum**: 中長期 60日 / 120日 的絕對報酬率
+
+**執行範例 (比較對照)：**
 ```bash
-# 針對 GOOGL 使用前 3 年資料滾動訓練，並且合併 Regime Features
-python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 3 --target-days 120 --target-return 0.20 --use-regime-features
+# 1. 計算 Baseline (純個股特徵)
+python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 3 --target-days 120 --target-return 0.20 --output-dir output_rolling_baseline --seed 42
+
+# 2. 加入 Regime Features (自學大盤環境)
+python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 3 --target-days 120 --target-return 0.20 --use-regime-features --output-dir output_rolling_w_feat --seed 42
 ```
 
-這項開關也會在產出的 `rolling_summary` 報表中新增對應的統計欄位（如該年的高波動佔比），方便事後審查模型決策時的市場環境對應。
+**驗收與觀察點：**
+打開 `output_rolling_w_feat/.../rolling_summary.csv` 檢查成果：
+- 檢查 `reversal_warning` 是否在歷史上的熊市 (如 2019/2022) 成功從 `True` 轉為 `False`。
+- 觀察 `rolling_summary.csv` 中新增的統計欄位（如該年的 `regime_above_ma200_rate` 平均低於 0.5 時，模型的命中率有無穩住），藉此驗收模型是否成功靠大盤特徵避開了不佳市況。
 
 ### 4. 自動化網格搜尋 (Window Years Grid)
 
