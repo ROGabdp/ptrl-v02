@@ -513,16 +513,34 @@ def main():
                 continue
                 
             # Predict today
-            x_today = pd.DataFrame([row])[active_cols].fillna(0) # quick fix if any na
-            p_today = float(get_positive_proba(current_model, x_today)[0][0])
+            x_today = pd.DataFrame([row])[active_cols]
+            if x_today.isnull().any().any():
+                signals.append({
+                    'date': t_date,
+                    'price': row['Close'],
+                    'p_t': float('nan'),
+                    'pct_rank_t': float('nan'),
+                    'is_high_risk': False,
+                    'action': 'SKIP_NO_FEATURES',
+                    'buy_ratio': 0.0,
+                    'model_version_id': model_version_id,
+                    'hist_n': 0,
+                    'retrain_date': last_train_date.strftime('%Y-%m-%d') if last_train_date else None
+                })
+                continue
+                
+            p_res = get_positive_proba(current_model, x_today)
+            p_today = float((p_res[0] if isinstance(p_res, tuple) else p_res)[0])
             
             # Predict history past 252 days
             past_252_start = t_date - pd.Timedelta(days=400) # buffer for trading days
             hist_slice = feat_df[(feat_df['date'] >= past_252_start) & (feat_df['date'] < t_date)]
             hist_slice = hist_slice.dropna(subset=active_cols).tail(252)
+            hist_n = len(hist_slice)
             
-            if len(hist_slice) > 0:
-                hist_scores = get_positive_proba(current_model, hist_slice[active_cols])[0]
+            if hist_n > 0:
+                h_res = get_positive_proba(current_model, hist_slice[active_cols])
+                hist_scores = h_res[0] if isinstance(h_res, tuple) else h_res
                 pct_rank_today = percentileofscore(hist_scores, p_today) / 100.0
             else:
                 pct_rank_today = 0.5 # default mid if no history
@@ -546,7 +564,9 @@ def main():
                 'is_high_risk': is_high_risk,
                 'action': action,
                 'buy_ratio': buy_ratio,
-                'model_version_id': model_version_id
+                'model_version_id': model_version_id,
+                'hist_n': hist_n,
+                'retrain_date': last_train_date.strftime('%Y-%m-%d') if last_train_date else None
             })
             
         signals_df = pd.DataFrame(signals)
