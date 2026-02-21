@@ -2,12 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-US Tech Stock - Daily Train & Predictor
+US Tech Stock - Daily Train & Predictor (Single Ticker Approach)
 ================================================================================
-這個腳本用來幫助您每天載入最新的股票資料，進行自動化當日建模 (Daily Train) 
-並推斷「今日最新的收盤數值」是否滿足未來漲幅的買點特徵，並產出 Top K 推薦清單。
-
-如果提供 --model-path，則會退回傳統模式，直接使用提前預先訓練好的模型進行推論。
+每天依據最新抓取的市場資料為每個股票「獨立」建構滾動特寫模型，並依據該標的今日分數
+在其最近 252 交易日（歷史分位數）間的相對強度，與今日大盤風控指標結合，進行評級與佈局判斷。
 ================================================================================
 """
 
@@ -15,10 +13,12 @@ import os
 import sys
 import argparse
 import joblib
+import json
 import pandas as pd
 import numpy as np
 import warnings
 from datetime import datetime, timedelta
+from scipy.stats import percentileofscore
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -37,31 +37,30 @@ except ImportError as e:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Predict 'Today's Buy Decision' for US Tech Stocks")
+    parser = argparse.ArgumentParser(description="Predict 'Today's Buy Decision' single ticker approach")
     
-    # 執行模式 (Daily Train 或是 傳統讀取模式)
+    # 執行與檔案模式
     parser.add_argument("--model-path", type=str, default=None, 
-                        help="選填：提供已訓練模型路徑 (.zip/.joblib)。若未提供，則啟動 Daily Train 模式自動建構當日模型。")
+                        help="選填：提供已預先訓練好之模型檔案(路徑需含 {ticker} 佔位符)。若無，則進行當日獨立訓練。")
+    parser.add_argument("--output-dir", type=str, default="output_daily", help="當日模型與結果儲存根目錄")
     
-    # 目標設定
+    # 推薦與目標參數
     parser.add_argument("--tickers", nargs="+", 
                         default=["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "TSLA", "NFLX", "PLTR"],
-                        help="要預測的目標股票列表 (預設 10 檔)")
+                        help="要預測的目標股票列表")
     parser.add_argument("--target-days", type=int, default=120, help="預測未來的交易天數 (預設 120)")
     parser.add_argument("--target-return", type=float, default=0.20, help="目標最高價漲幅門檻 (預設 0.20)")
     
-    # Daily Train 參數
-    parser.add_argument("--window-years", type=int, default=3, help="Daily Train 抓取的歷史訓練窗格大小 (預設 3 年)")
-    parser.add_argument("--use-regime-features", type=str, default="true", choices=["true", "false"], 
-                        help="是否掛載大盤 Regime Features 一併訓練/預測 (預設 true)")
-    parser.add_argument("--force-retrain", action="store_true", help="強制重新訓練新模型，即使今日已存在快取")
-    parser.add_argument("--output-dir", type=str, default="output_daily", help="當日模型儲存根目錄")
-    parser.add_argument("--no-cache", action="store_true", help="強制重新計算特徵而不是讀取昨天快取")
+    # 模型推斷設定
+    parser.add_argument("--window-years", type=int, default=3, help="訓練窗格大小 (預設 3 年)")
+    parser.add_argument("--lookback-years", type=int, default=8, help="下載資料所需推前年數供 MA/特徵暖機用 (預設 8 年)")
+    parser.add_argument("--pct-lookback-days", type=int, default=252, help="分位數計算推斷的樣本天數 (預設 252 交易日)")
+    parser.add_argument("--topk-threshold-pct", type=float, default=0.90, help="正常市場下作為買入標準之歷史分位數 (預設 0.90 -> Top 10%)")
+    parser.add_argument("--risk-threshold-pct", type=float, default=0.95, help="高風險市場下嚴格化之分位數門檻 (預設 0.95 -> Top 5%)")
+    parser.add_argument("--use-regime-features", type=str, default="true", choices=["true", "false"])
     
-    # 決策輸出參數
-    parser.add_argument("--topk-pct", type=int, default=10, help="Top K 輸出的百分比 (預設 10%)")
-    parser.add_argument("--topk-n", type=int, default=None, help="絕對數值的 Top K，若提供則優先於 pct")
-    parser.add_argument("--threshold", type=float, default=0.5, help="(傳統模式用) 決定買進的正類機率閾值 (預設 0.5)")
+    parser.add_argument("--force-retrain", action="store_true", help="強制重新訓練新模型忽略當日快取")
+    parser.add_argument("--no-cache", action="store_true", help="強制重新擷取/計算盤後特徵不讀取歷史暫存檔")
     return parser.parse_args()
 
 
@@ -78,118 +77,17 @@ def load_model_and_predict(model_path, model_type, X_input):
         
     elif model_type in ["sklearn", "daily"]:
         model = joblib.load(model_path)
-        # 用 pandas 塞進去避免 warn (若有 col names)
-        # 若傳進來是 np array 的 X_input 也會直接對付
         y_proba, _, _ = get_positive_proba(model, pd.DataFrame(X_input), positive_label=1)
-        return float(y_proba[0])
-        
+        # Handle single vs batch predictions
+        if len(y_proba) == 1:
+            return float(y_proba[0])
+        else:
+            return y_proba
     else:
         raise ValueError(f"不認得的模型格式: {model_type}")
 
-def fetch_and_prepare_daily_data(args):
-    # 下載推往前推 8 年的資料以保留足夠 Buffer (MA240 + window_years)
-    start_date = (datetime.today() - timedelta(days=8*365)).strftime("%Y-%m-%d")
-    print(f"📥 正在從 Yahoo Finance 獲取/更新最新股價 (自 {start_date} 起)...")
-    
-    all_data = fetch_all_stock_data(start_date=start_date)
-    benchmark_df = all_data.get(BENCHMARK)
-    
-    if benchmark_df is None:
-        raise ValueError(f"❌ 無法載入基準指數 {BENCHMARK} 的資料。")
-        
-    return all_data, benchmark_df
-
-def train_daily_model(args, all_data, benchmark_df):
-    """將各 Tickers 的特徵串接在一起，建立一份當日統整模型"""
-    today_str = datetime.today().strftime("%Y%m%d")
-    daily_model_dir = os.path.join(args.output_dir, today_str)
-    os.makedirs(daily_model_dir, exist_ok=True)
-    
-    model_save_path = os.path.join(daily_model_dir, "model.joblib")
-    
-    use_regime = (args.use_regime_features == "true")
-    active_cols = FEATURE_COLS + (REGIME_COLS if use_regime else [])
-    
-    if os.path.exists(model_save_path) and not args.force_retrain:
-        print(f"♻️ 發現今日快取模型，直接載入: {model_save_path}")
-        return model_save_path, active_cols, ("Loaded from cache", "Loaded from cache")
-        
-    print(f"⚙️ 準備 Daily Train 訓練資料集 (Window: {args.window_years} years)...")
-    
-    train_dfs = []
-    regime_df = compute_regime_features(benchmark_df) if use_regime else None
-    
-    # 決定訓練切割邊界: 確保 y label 不漏看未來
-    # 取全部股票最新的一天作為 T
-    latest_date_overall = None
-    for tk in args.tickers:
-        if tk in all_data and len(all_data[tk]) > 0:
-            last_dt = all_data[tk].index[-1] if isinstance(all_data[tk].index, pd.DatetimeIndex) else pd.to_datetime(all_data[tk]['Date']).max()
-            if latest_date_overall is None or last_dt > latest_date_overall:
-                latest_date_overall = last_dt
-                
-    if latest_date_overall is None:
-        latest_date_overall = pd.to_datetime(datetime.today())
-        
-    train_end = latest_date_overall
-    train_start = train_end - pd.DateOffset(years=args.window_years)
-    
-    train_start_str = train_start.strftime("%Y-%m-%d")
-    train_end_str = train_end.strftime("%Y-%m-%d")
-    print(f"  [Train Window Range] {train_start_str} ~ {train_end_str}")
-    
-    target_col = f"Next_{args.target_days}d_Max"
-    
-    for tk in args.tickers:
-        raw_df = all_data.get(tk)
-        if raw_df is None or len(raw_df) == 0: continue
-            
-        feat_df = calculate_features(raw_df, benchmark_df, ticker=tk, use_cache=not args.no_cache)
-        if target_col not in feat_df.columns:
-            continue
-            
-        feat_df = feat_df.reset_index()
-        if 'Date' in feat_df.columns:
-            feat_df.rename(columns={'Date': 'date'}, inplace=True)
-        elif 'index' in feat_df.columns:
-            feat_df.rename(columns={'index': 'date'}, inplace=True)
-            
-        feat_df['date'] = pd.to_datetime(feat_df['date'])
-        
-        # Merge regime
-        if use_regime:
-            feat_df['date_str'] = feat_df['date'].dt.strftime('%Y-%m-%d')
-            # regime_df 的 date 也是字串
-            feat_df = pd.merge(feat_df, regime_df, left_on='date_str', right_on='date', how='inner', suffixes=('', '_regime'))
-            
-        # 切割訓練集
-        mask = (feat_df['date'] >= train_start) & (feat_df['date'] <= train_end)
-        train_slice = feat_df[mask].copy()
-        train_slice = train_slice.dropna(subset=active_cols + [target_col])
-        
-        train_slice['y'] = (train_slice[target_col] >= args.target_return).astype(int)
-        train_dfs.append(train_slice)
-        
-    if not train_dfs:
-        print("❌ 找不到任何有效的訓練資料，請檢查區間或 Tickers 設定")
-        sys.exit(1)
-        
-    df_train_pooled = pd.concat(train_dfs, ignore_index=True)
-    X_train = df_train_pooled[active_cols]
-    y_train = df_train_pooled['y']
-    
-    print(f"🧠 進行 HistGradientBoosting 模型集訓 (N={len(X_train)}, Pos Rate={y_train.mean()*100:.2f}%) ...")
-    from sklearn.ensemble import HistGradientBoostingClassifier
-    model = HistGradientBoostingClassifier(random_state=42)
-    model.fit(X_train, y_train)
-    
-    joblib.dump(model, model_save_path)
-    print(f"✅ 當日模型儲存完畢: {model_save_path}")
-    
-    return model_save_path, active_cols, (train_start_str, train_end_str)
-
 def evaluate_regime_risk(benchmark_df):
-    """判斷市場是否處於高風險狀態 (V2 Proxy 風控機制)"""
+    """判斷市場是否處於高風險狀態 (Proxy 風控機制)"""
     regime_df = compute_regime_features(benchmark_df)
     if len(regime_df) == 0: return "NORMAL", False
     
@@ -200,181 +98,231 @@ def evaluate_regime_risk(benchmark_df):
     ret_120 = latest_regime.get('REGIME_BM_RET_120', 0.0)
     
     is_risk = False
-    reason = []
+    reasons = []
     
     if bm_above_ma200 == 0 and hv20_pctl > 0.8:
         is_risk = True
-        reason.append(" MA200 Below & HV20 Pctl > 80% ")
+        reasons.append("MA200 Below & HV20_Pctl > 0.8")
         
     if ret_120 < 0 and hv20_pctl > 0.8:
         is_risk = True
-        reason.append(" 120d Return < 0 & HV20 Pctl > 80% ")
+        reasons.append("120d Return < 0 & HV20_Pctl > 0.8")
         
     if is_risk:
-        return f"HIGH RISK (Proxy: {'|'.join(reason)})", True
+        return f"HIGH_RISK ({'|'.join(reasons)})", True
     return "NORMAL", False
-    
+
 
 def main():
     args = parse_args()
     
-    is_daily_train = (args.model_path is None)
-    
     print("====================================================================")
-    print("🚀 US Tech Stock - Daily Train & Predictor")
+    print("🚀 US Tech Stock - Daily Train & Predictor (Single Ticker Rank)")
     print("====================================================================")
-    print(f"  Mode        : {'Daily Train & Predict' if is_daily_train else 'Legacy Predict (Loaded Model)'}")
-    print(f"  Target      : Next_{args.target_days}d_Max >= {args.target_return*100:g}%")
-    print(f"  Tickers     : {', '.join(args.tickers)}")
-    if not is_daily_train:
-        print(f"  Threshold   : {args.threshold} (Legacy Mode)")
-    print("====================================================================\n")
     
+    today_str = datetime.today().strftime("%Y%m%d")
+    output_daily_dir = os.path.join(args.output_dir, today_str)
+    os.makedirs(output_daily_dir, exist_ok=True)
+    
+    # 1. 抓取資料
+    start_date = (datetime.today() - timedelta(days=args.lookback_years*365)).strftime("%Y-%m-%d")
+    print(f"📥 正在從 Yahoo Finance 獲取/更新最新股價 (自 {start_date} 起)...")
     try:
-         all_data, benchmark_df = fetch_and_prepare_daily_data(args)
+         all_data = fetch_all_stock_data(start_date=start_date)
+         benchmark_df = all_data.get(BENCHMARK)
+         if benchmark_df is None: raise ValueError(f"無法載入基準 {BENCHMARK}")
     except Exception as e:
          print(f"❌ {e}")
          sys.exit(1)
          
-    # --- 模型處理與前置作業 ---
-    active_cols = FEATURE_COLS
-    train_range = ("N/A", "N/A")
-    use_regime_features = False
+    use_regime = (args.use_regime_features == "true")
+    active_cols = FEATURE_COLS + (REGIME_COLS if use_regime else [])
+    target_col = f"Next_{args.target_days}d_Max"
     
-    if is_daily_train:
-         use_regime_features = (args.use_regime_features == "true")
-         model_path, active_cols, train_range = train_daily_model(args, all_data, benchmark_df)
-         model_type = "daily"
-    else:
-         multi_model = "{ticker}" in args.model_path
-         model_ext = ".zip" if ".zip" in args.model_path else ".joblib"
-         model_type = "ppo" if model_ext == ".zip" else "sklearn"
-         model_path = args.model_path
-         
-    # --- Regime 風險推斷 ---
+    # 2. Proxy Risk 計算
     risk_status_text, is_high_risk = evaluate_regime_risk(benchmark_df)
+    regime_df = compute_regime_features(benchmark_df) if use_regime else None
     
+    # 決定今天用的 Threshold
+    active_threshold_pct = args.risk_threshold_pct if is_high_risk else args.topk_threshold_pct
     
-    # --- 逐 Ticker 萃取今日特徵與推論 ---
-    results = [] # (ticker, latest_date, proba, warning_text)
+    print(f"  [風控狀態] {risk_status_text} | 預計使用門檻: 分位數 >= {active_threshold_pct*100:g}%")
     
-    regime_df = compute_regime_features(benchmark_df) if use_regime_features else None
+    results = [] # output row dictionaries
+    run_summary = {
+        "run_date": today_str,
+        "target_days": args.target_days,
+        "target_return": args.target_return,
+        "window_years": args.window_years,
+        "tickers": args.tickers,
+        "global_risk_state": "High Risk" if is_high_risk else "Normal",
+        "ticker_summaries": {}
+    }
     
-    for ticker in args.tickers:
-        raw_df = all_data.get(ticker)
-        if raw_df is None or len(raw_df) == 0: continue
+    # 3. 逐檔開始 Train & Predict 流程
+    for tk in args.tickers:
+        raw_df = all_data.get(tk)
+        if raw_df is None or len(raw_df) == 0:
+            print(f"⚠️ {tk}: 無法取得足夠報價，跳過。")
+            continue
+            
+        print(f"\n⚙️ 處理股票 [{tk}] ...")
         
-        cur_model_path = model_path.replace("{ticker}", ticker) if not is_daily_train and "{ticker}" in model_path else model_path
-        if not os.path.exists(cur_model_path):
-             results.append((ticker, "N/A", -1.0, "No Model"))
+        # A) 特徵裝配
+        feat_df = calculate_features(raw_df, benchmark_df, ticker=tk, use_cache=not args.no_cache)
+        if target_col not in feat_df.columns:
+            print(f"  {tk}: 未找到指定的 Target Col {target_col}，跳過。")
+            continue
+            
+        feat_df = feat_df.reset_index()
+        if 'Date' in feat_df.columns: feat_df.rename(columns={'Date': 'date'}, inplace=True)
+        elif 'index' in feat_df.columns: feat_df.rename(columns={'index': 'date'}, inplace=True)
+        feat_df['date'] = pd.to_datetime(feat_df['date'])
+        
+        if use_regime:
+            feat_df['date_str'] = feat_df['date'].dt.strftime('%Y-%m-%d')
+            feat_df = pd.merge(feat_df, regime_df, left_on='date_str', right_on='date', how='inner', suffixes=('', '_regime'))
+        
+        # B) 模型路徑與訓練
+        ticker_model_dir = os.path.join(output_daily_dir, tk)
+        os.makedirs(ticker_model_dir, exist_ok=True)
+        
+        is_legacy_mode = (args.model_path is not None)
+        if is_legacy_mode:
+             model_path = args.model_path.replace("{ticker}", tk)
+             model_type = "ppo" if ".zip" in model_path else "sklearn"
+        else:
+             model_path = os.path.join(ticker_model_dir, "model.joblib")
+             model_type = "daily"
+             
+        # C) 資料切片 [Today - 3y, Today] (給 Daily Train 用，Legacy 也要算出實際範圍以供記錄)
+        train_end = feat_df['date'].max()
+        train_start = train_end - pd.DateOffset(years=args.window_years)
+        
+        mask_train = (feat_df['date'] >= train_start) & (feat_df['date'] <= train_end)
+        train_slice = feat_df[mask_train].dropna(subset=active_cols + [target_col]).copy()
+        
+        n_train = len(train_slice)
+        if n_train == 0:
+             print(f"  {tk}: 資料因 NA 或過短而清空，無法建立模型預測。")
+             run_summary["ticker_summaries"][tk] = {"status": "Error: Insufficient Data"}
              continue
              
-        try:
-             feat_df = calculate_features(raw_df, benchmark_df, ticker=ticker, use_cache=not args.no_cache)
-             latest_feat = feat_df.iloc[-1:].copy()
-             
-             if 'Date' in latest_feat.columns:
-                 latest_date = latest_feat['Date'].iloc[0].strftime("%Y-%m-%d")
-             elif latest_feat.index.name == 'Date' or isinstance(latest_feat.index, pd.DatetimeIndex):
-                 latest_date = latest_feat.index[0].strftime("%Y-%m-%d")
-             else:
-                 latest_date = "Unknown"
-                 
-             if use_regime_features:
-                 # 取回 regime 最後一筆 (因為是大盤，不一定對齊，取對應日期)
-                 matching_regime = regime_df.loc[regime_df['date'] == latest_date]
-                 if matching_regime.empty:
-                      # 假如對不到日期，退而求其次抓大盤最後一筆
-                      latest_regime_row = regime_df.iloc[-1]
-                 else:
-                      latest_regime_row = matching_regime.iloc[0]
-                      
-                 for c in REGIME_COLS:
-                      latest_feat[c] = latest_regime_row[c]
-                      
-             # 取值預測，將 DataFrame 包裝塞入以保留 pandas column 名字
-             X_input = pd.DataFrame([latest_feat[active_cols].iloc[0]], columns=active_cols)
-             if model_type == "ppo": X_input = X_input.values.astype(np.float32)
-             
-             proba = load_model_and_predict(cur_model_path, model_type, X_input)
-             results.append((ticker, latest_date, proba, ""))
-             
-        except Exception as e:
-             results.append((ticker, "N/A", -1.0, f"Error: {str(e)[:15]}"))
-             
-             
-    # --- 決策邏輯 (Top K) ---
-    if is_daily_train:
-         # 計算名額
-         total_valid = len([r for r in results if r[2] >= 0])
-         if args.topk_n is not None:
-              base_k = args.topk_n
-         else:
-              base_k = max(1, int(total_valid * (args.topk_pct / 100.0)))
-              
-         final_k = base_k
-         if is_high_risk:
-              final_k = max(0, base_k // 2)
-              
-         # 排序
-         results.sort(key=lambda x: x[2], reverse=True)
-         
-         final_rows = []
-         rank = 1
-         for tk, dt, pb, warn in results:
-             if pb < 0:
-                 action = warn
-             else:
-                 if is_high_risk and final_k == 0:
-                      action = "SKIP_RISK 🛑"
-                 elif rank <= final_k:
-                      action = "BUY_TOPK 🟢"
-                 elif rank <= base_k and is_high_risk:
-                      action = "DOWNGRADE_RISK ⚠️"
-                 else:
-                      action = "WATCHLIST ⚪"
-                 rank += 1
-             final_rows.append((tk, dt, pb, action))
-             
-    else:
-         # Legacy Threshold mode
-         final_rows = []
-         for tk, dt, pb, warn in results:
-             if pb < 0: action = warn
-             else:
-                 action = "BUY 🟢" if pb >= args.threshold else "WAIT ⚪"
-             final_rows.append((tk, dt, pb, action))
-             
-
-    # --- 報表輸出 ---
-    print("\n📊 今日推論結果 (Prediction for Latest Close)")
-    print("-" * 75)
-    header_prob = f"Score P({args.target_days})"
-    print(f"{'Rank':<5} | {'Ticker':<8} | {'Latest Date':<12} | {header_prob:<14} | {'Action':<15}")
-    print("-" * 75)
-    
-    r_idx = 1
-    for tk, dt, pb, act in final_rows:
-        pb_str = "N/A" if (pb < 0 or np.isnan(pb)) else f"{pb*100:6.2f}%"
-        rank_str = f"#{r_idx}" if pb >= 0 else "-"
-        print(f"{rank_str:<5} | {tk:<8} | {dt:<12} | {pb_str:<14} | {act:<15}")
-        if pb >= 0: r_idx += 1
+        train_slice['y'] = (train_slice[target_col] >= args.target_return).astype(int)
+        pos_rate = train_slice['y'].mean()
         
-    print("-" * 75)
-    print("📝 【報表總結】")
-    if is_daily_train:
-         print(f"  [模型窗格] {train_range[0]} ~ {train_range[1]} (3y Pooled HGB) {'含 Regime 特徵' if use_regime_features else ''}")
-         print(f"  [風控狀態] {risk_status_text}")
-         
-         topk_desc = f"{args.topk_n} 檔" if args.topk_n else f"{args.topk_pct}%"
-         if is_high_risk:
-              print(f"  [出手策略] 原目標 Top {topk_desc} (降槓桿縮倉: 取 {final_k} 檔)")
-         else:
-              print(f"  [出手策略] 取 Top {topk_desc} (發放名額: {final_k} 檔)")
-         print(f"  [快取路徑] {model_path}")
-    else:
-         print(f"  [模型路徑] {args.model_path}")
-         print(f"  [評估門檻] Threshold = {args.threshold}")
+        if not is_legacy_mode:
+            if os.path.exists(model_path) and not args.force_retrain:
+                print(f"  [{tk}] 模型已快取，省略訓練。")
+            else:
+                from sklearn.ensemble import HistGradientBoostingClassifier
+                model = HistGradientBoostingClassifier(random_state=42)
+                model.fit(train_slice[active_cols], train_slice['y'])
+                joblib.dump(model, model_path)
+                print(f"  [{tk}] 單檔模型訓練完畢 (Train size: {n_train}, Pos Rate: {pos_rate*100:.2f}%)")
+        
+        # D) 推論今天 p_today
+        # 今天是包含在 feat_df 最後一筆 (因為 target_col NaNs 也被算進 calculate_features)
+        # 必須手動取 feat_df 最後一筆並確保 active_cols 無 NaN
+        latest_feat = feat_df.iloc[-1:].copy()
+        latest_date_str = latest_feat['date'].iloc[0].strftime("%Y-%m-%d")
+        
+        if latest_feat[active_cols].isnull().any().any():
+             print(f"  [{tk}] 最新一筆資料({latest_date_str})特徵存在空值，退出。")
+             # 或許部分 regime 還未更新所以最後一天空值，安全起見我們取 feat_df.dropna(subset=active_cols).iloc[-1:] 
+             # 但這最符合使用者所認知的「今天(或最新一筆有效日)」之條件
+             latest_feat = feat_df.dropna(subset=active_cols).iloc[-1:]
+             if len(latest_feat) == 0: continue
+             latest_date_str = latest_feat['date'].iloc[0].strftime("%Y-%m-%d")
+             
+        X_today = pd.DataFrame(latest_feat[active_cols])
+        if model_type == 'ppo': X_today = X_today.values.astype(np.float32)
+        p_today = load_model_and_predict(model_path, model_type, X_today)
+        
+        # E) 計算歷史分位數 p_history (pct_lookback_days)
+        # 取有效特徵的歷史資料
+        valid_history_df = feat_df.dropna(subset=active_cols).copy()
+        # 切過去 pct_lookback_days 筆 (不含今天自己，或者含也可以，不影響大局)
+        base_lookback_df = valid_history_df.iloc[-(args.pct_lookback_days+1):-1]
+        
+        if len(base_lookback_df) < (args.pct_lookback_days // 2): 
+             # Fallback
+             pct_rank_today = np.nan
+             print(f"  [{tk}] 歷史可用紀錄 {len(base_lookback_df)} 天過短，無法計算可靠的 Percentile (>50% required)。")
+        else:
+             X_hist = pd.DataFrame(base_lookback_df[active_cols])
+             if model_type == 'ppo': X_hist = X_hist.values.astype(np.float32)
+             p_hist_array = load_model_and_predict(model_path, model_type, X_hist)
+             # scipy percentileofscore [0, 100]
+             pct_rank_today = percentileofscore(p_hist_array, p_today) / 100.0
+             
+        # F) 決策判斷
+        action = "WATCH"
+        position_scale = 0.0
+        
+        if np.isnan(pct_rank_today):
+             action = "WATCH_INSUFFICIENT_DATA"
+        elif pct_rank_today >= active_threshold_pct:
+             if is_high_risk:
+                 action = "BUY_REDUCED"
+                 position_scale = 0.5
+             else:
+                 action = "BUY"
+                 position_scale = 1.0
+        else:
+             if is_high_risk:
+                 action = "SKIP_RISK"
+        
+        print(f"  [{tk}] P({args.target_days}): {p_today*100:.2f}% | PctRank(252d): {pct_rank_today*100 if not np.isnan(pct_rank_today) else np.nan:.1f}% => {action}")
+        
+        # 紀錄檔保存
+        results.append({
+             "date": latest_date_str,
+             "ticker": tk,
+             "p_today": float(p_today),
+             "pct_rank_today": float(pct_rank_today),
+             "action": action,
+             "position_scale": float(position_scale),
+             "is_high_risk": is_high_risk,
+             "threshold_pct_used": float(active_threshold_pct),
+             "train_start_requested": train_start.strftime('%Y-%m-%d'),
+             "train_end_requested": train_end.strftime('%Y-%m-%d'),
+             "train_start_actual": train_slice['date'].min().strftime('%Y-%m-%d') if len(train_slice) > 0 else "N/A",
+             "train_end_actual": train_slice['date'].max().strftime('%Y-%m-%d') if len(train_slice) > 0 else "N/A",
+             "n_train": n_train,
+             "pos_rate_train": float(pos_rate)
+        })
+        
+        run_summary["ticker_summaries"][tk] = {
+             "model_path": model_path,
+             "n_train": n_train,
+             "pos_rate": pos_rate,
+             "valid_history_days": len(base_lookback_df)
+        }
+
+    # 4. CSV 與 JSON 寫檔
+    csv_path = os.path.join(output_daily_dir, "predictions.csv")
+    json_path = os.path.join(output_daily_dir, "run_summary.json")
+    
+    if len(results) > 0:
+        df_out = pd.DataFrame(results)
+        df_out.to_csv(csv_path, index=False)
+        
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(run_summary, f, indent=4)
+        
+    # --- 報表輸出 ---
+    print("\n📊 今日推論結果 (Single Ticker Approach)")
+    print("-" * 88)
+    print(f"{'Ticker':<8} | {'Latest Date':<12} | {'Score(p)':<10} | {'PctRank':<8} | {'Act Thresh':<10} | {'Action':<15} | {'Pos Scale'}")
+    print("-" * 88)
+    for r in results:
+        pct_str = f"{r['pct_rank_today']*100:.1f}%" if not np.isnan(r['pct_rank_today']) else "N/A"
+        print(f"{r['ticker']:<8} | {r['date']:<12} | {r['p_today']*100:6.2f}%    | {pct_str:<8} | >={r['threshold_pct_used']*100:g}%     | {r['action']:<15} | x{r['position_scale']}")
+        
+    print("-" * 88)
+    print(f"📝 報告輸出完成於: {output_daily_dir}")
+    print(f"✅ predictions.csv 與 run_summary.json 已更新檔案")
     print("====================================================================\n")
 
 if __name__ == "__main__":
