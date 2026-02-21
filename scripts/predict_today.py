@@ -28,6 +28,7 @@ if ROOT_DIR not in sys.path:
 
 from src.train.sklearn_utils import get_positive_proba
 from src.features.regime_features import compute_regime_features, REGIME_COLS
+from src.features.regime_features_stock import compute_stock_regime_features, STOCK_REGIME_COLS
 
 try:
     from train_us_tech_buy_agent import fetch_all_stock_data, calculate_features, FEATURE_COLS, BENCHMARK
@@ -59,9 +60,20 @@ def parse_args():
     parser.add_argument("--risk-threshold-pct", type=float, default=0.95, help="高風險市場下嚴格化之分位數門檻 (預設 0.95 -> Top 5%%)")
     parser.add_argument("--use-regime-features", type=str, default="true", choices=["true", "false"])
     
+    parser.add_argument("--profiles-path", type=str, default=None,
+                        help="Per-ticker 設定檔路徑 (JSON)，若提供則覆寫個別預設參數。")
     parser.add_argument("--force-retrain", action="store_true", help="強制重新訓練新模型忽略當日快取")
     parser.add_argument("--no-cache", action="store_true", help="強制重新擷取/計算盤後特徵不讀取歷史暫存檔")
     return parser.parse_args()
+
+def get_ticker_profile(tk, profiles):
+    if not profiles:
+        return {}, "cli_args"
+    if tk in profiles:
+        return profiles[tk], tk
+    if "default" in profiles:
+        return profiles["default"], "default"
+    return {}, "cli_args"
 
 
 def load_model_and_predict(model_path, model_type, X_input):
@@ -135,13 +147,20 @@ def main():
          print(f"❌ {e}")
          sys.exit(1)
          
-    use_regime = (args.use_regime_features == "true")
-    active_cols = FEATURE_COLS + (REGIME_COLS if use_regime else [])
-    target_col = f"Next_{args.target_days}d_Max"
+    use_regime_global = (args.use_regime_features == "true")
+    
+    profiles = {}
+    if args.profiles_path and os.path.exists(args.profiles_path):
+        with open(args.profiles_path, "r", encoding="utf-8") as f:
+            profiles = json.load(f)
+        print(f"📖 成功載入 Per-Ticker Profiles 檔: {args.profiles_path}")
+    
+    # 全局算一次 Benchmark 的 Regime DataFrame (若被任何 Profile 需要)
+    # 不過為求簡潔與統一口徑，我們不管誰要用，先把它準備好作為快取。
+    regime_df = compute_regime_features(benchmark_df)
     
     # 2. Proxy Risk 計算
     risk_status_text, is_high_risk = evaluate_regime_risk(benchmark_df)
-    regime_df = compute_regime_features(benchmark_df) if use_regime else None
     
     # 決定今天用的 Threshold
     active_threshold_pct = args.risk_threshold_pct if is_high_risk else args.topk_threshold_pct
@@ -168,6 +187,27 @@ def main():
             
         print(f"\n⚙️ 處理股票 [{tk}] ...")
         
+        # 解析該檔專屬 Profile 設定
+        profile, profile_name = get_ticker_profile(tk, profiles)
+        tk_target_days = profile.get("target_days", args.target_days)
+        tk_target_return = profile.get("target_return", args.target_return)
+        
+        if profiles:
+            tk_regime_profile = profile.get("regime_profile", "none")
+            tk_hgb_preset = profile.get("hgb_reg_preset", "default")
+        else:
+            tk_regime_profile = "bm_only" if use_regime_global else "none"
+            tk_hgb_preset = "default"
+            
+        target_col = f"Next_{tk_target_days}d_Max"
+        
+        # 決定 Active Cols
+        active_cols = FEATURE_COLS.copy()
+        if tk_regime_profile in ["bm_only", "bm_plus_stock"]:
+            active_cols += REGIME_COLS
+        if tk_regime_profile == "bm_plus_stock":
+            active_cols += STOCK_REGIME_COLS
+            
         # A) 特徵裝配
         feat_df = calculate_features(raw_df, benchmark_df, ticker=tk, use_cache=not args.no_cache)
         if target_col not in feat_df.columns:
@@ -179,9 +219,13 @@ def main():
         elif 'index' in feat_df.columns: feat_df.rename(columns={'index': 'date'}, inplace=True)
         feat_df['date'] = pd.to_datetime(feat_df['date'])
         
-        if use_regime:
+        if tk_regime_profile in ["bm_only", "bm_plus_stock"]:
             feat_df['date_str'] = feat_df['date'].dt.strftime('%Y-%m-%d')
-            feat_df = pd.merge(feat_df, regime_df, left_on='date_str', right_on='date', how='inner', suffixes=('', '_regime'))
+            feat_df = pd.merge(feat_df, regime_df, left_on='date_str', right_on='date', how='left', suffixes=('', '_regime'))
+            
+            if tk_regime_profile == "bm_plus_stock":
+                df_stock_regime = compute_stock_regime_features(raw_df, benchmark_df)
+                feat_df = pd.merge(feat_df, df_stock_regime, left_on='date_str', right_on='date', how='left', suffixes=('', '_stock'))
         
         # B) 模型路徑與訓練
         ticker_model_dir = os.path.join(output_daily_dir, tk)
@@ -192,7 +236,9 @@ def main():
              model_path = args.model_path.replace("{ticker}", tk)
              model_type = "ppo" if ".zip" in model_path else "sklearn"
         else:
-             model_path = os.path.join(ticker_model_dir, "model.joblib")
+             target_return_pct = int(tk_target_return * 100)
+             model_filename = f"model_{tk_target_days}d_{target_return_pct}p_{tk_regime_profile}_{tk_hgb_preset}.joblib"
+             model_path = os.path.join(ticker_model_dir, model_filename)
              model_type = "daily"
              
         # C) 資料切片 [Today - 3y, Today] (給 Daily Train 用，Legacy 也要算出實際範圍以供記錄)
@@ -208,7 +254,7 @@ def main():
              run_summary["ticker_summaries"][tk] = {"status": "Error: Insufficient Data"}
              continue
              
-        train_slice['y'] = (train_slice[target_col] >= args.target_return).astype(int)
+        train_slice['y'] = (train_slice[target_col] >= tk_target_return).astype(int)
         pos_rate = train_slice['y'].mean()
         
         if not is_legacy_mode:
@@ -217,6 +263,8 @@ def main():
             else:
                 from sklearn.ensemble import HistGradientBoostingClassifier
                 model = HistGradientBoostingClassifier(random_state=42)
+                if tk_hgb_preset == 'regularized':
+                    model.set_params(min_samples_leaf=50, max_depth=3, l2_regularization=0.1)
                 model.fit(train_slice[active_cols], train_slice['y'])
                 joblib.dump(model, model_path)
                 print(f"  [{tk}] 單檔模型訓練完畢 (Train size: {n_train}, Pos Rate: {pos_rate*100:.2f}%)")
@@ -273,12 +321,17 @@ def main():
              if is_high_risk:
                  action = "SKIP_RISK"
         
-        print(f"  [{tk}] P({args.target_days}): {p_today*100:.2f}% | PctRank(252d): {pct_rank_today*100 if not np.isnan(pct_rank_today) else np.nan:.1f}% => {action}")
+        print(f"  [{tk}] P({tk_target_days}): {p_today*100:.2f}% | PctRank(252d): {pct_rank_today*100 if not np.isnan(pct_rank_today) else np.nan:.1f}% => {action}")
         
         # 紀錄檔保存
         results.append({
              "date": latest_date_str,
              "ticker": tk,
+             "profile_name": profile_name,
+             "regime_profile_used": tk_regime_profile,
+             "hgb_reg_preset_used": tk_hgb_preset,
+             "target_days_used": tk_target_days,
+             "target_return_used": tk_target_return,
              "p_today": float(p_today),
              "pct_rank_today": float(pct_rank_today),
              "action": action,
@@ -294,6 +347,11 @@ def main():
         })
         
         run_summary["ticker_summaries"][tk] = {
+             "profile_name": profile_name,
+             "regime_profile_used": tk_regime_profile,
+             "hgb_reg_preset_used": tk_hgb_preset,
+             "target_days_used": tk_target_days,
+             "target_return_used": tk_target_return,
              "model_path": model_path,
              "n_train": n_train,
              "pos_rate": pos_rate,
