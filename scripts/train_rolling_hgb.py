@@ -50,6 +50,12 @@ def parse_args():
     parser.add_argument('--use-regime-features', action='store_true', 
                         help="是否要合併 Benchmark Regime Features (例如 MA200, HV20) 一起丟給模型評估")
     
+    # Reversal 判定防呆
+    parser.add_argument('--reversal-gap-margin', type=float, default=0.10, 
+                        help="定義差距 (Hit Proba - Inv Proba) 小於負多少時發出警告 (預設: 0.10)")
+    parser.add_argument('--reversal-use-top10', type=str, default='true', choices=['true', 'false'],
+                        help="是否合併納入 Top 10% 樣本進行反向雙重確認 (預設: true)")
+    
     # 工具控制
     parser.add_argument('--no-cache', action='store_true', help="強制重新計算特徵不使用快取")
     parser.add_argument('--dry-run', action='store_true', help="僅輸出設定與切分的邊界與樣本數，不進行訓練")
@@ -57,36 +63,49 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_sanity_reversal_metrics(y_true, y_proba, k_pct=0.05):
+def get_sanity_reversal_metrics(y_true, y_proba, margin_threshold=0.10, use_top10=True):
     """
     計算並判斷是否有反向（Regime Shift 到連低分群都比高分群準）的問題。
-    回傳 top k 預測的精度、是否觸發 reversal warning 以及 margin。
+    回傳 top5 與 top10 的精度、gap，以及基於 gap_margin 發布的 warning。
     """
     n_samples = len(y_true)
-    k = max(1, int(n_samples * k_pct))
+    k5 = max(1, int(n_samples * 0.05))
+    k10 = max(1, int(n_samples * 0.10))
     
-    # High Confidence (Proba) Hit Rate
     sort_idx_proba = np.argsort(y_proba)[::-1]
-    top_k_y_true = y_true.iloc[sort_idx_proba[:k]] if isinstance(y_true, pd.Series) else y_true[sort_idx_proba[:k]]
-    top5_hit_rate_by_proba = float(np.mean(top_k_y_true))
-    
-    # Low Confidence (Inv Proba) Hit Rate
     inv_proba = 1.0 - y_proba
     sort_idx_inv = np.argsort(inv_proba)[::-1]
-    bottom_k_y_true = y_true.iloc[sort_idx_inv[:k]] if isinstance(y_true, pd.Series) else y_true[sort_idx_inv[:k]]
-    top5_hit_rate_by_invproba = float(np.mean(bottom_k_y_true))
     
-    margin = top5_hit_rate_by_invproba - top5_hit_rate_by_proba
-    # 如果最看衰的族群勝率超越最看好族群 10% 或以上，則發出嚴重警告
-    is_reversal = (margin >= 0.10)
+    def _calc_hit_rate(sort_idx, k):
+        top_k_y_true = y_true.iloc[sort_idx[:k]] if isinstance(y_true, pd.Series) else y_true[sort_idx[:k]]
+        return float(np.mean(top_k_y_true))
+        
+    # Top 5%
+    top5_proba_hr = _calc_hit_rate(sort_idx_proba, k5)
+    top5_inv_hr = _calc_hit_rate(sort_idx_inv, k5)
+    gap5 = top5_proba_hr - top5_inv_hr
+    warn5 = (gap5 <= -margin_threshold)
     
+    # Top 10%
+    top10_proba_hr = _calc_hit_rate(sort_idx_proba, k10)
+    top10_inv_hr = _calc_hit_rate(sort_idx_inv, k10)
+    gap10 = top10_proba_hr - top10_inv_hr
+    warn10 = (gap10 <= -margin_threshold)
+    
+    final_warning = warn5 or warn10 if use_top10 else warn5
+
     return {
-        'topk_pct': k_pct * 100,
-        'topk_n_by_year': k,
-        'top5_hit_rate_by_proba': top5_hit_rate_by_proba,
-        'top5_hit_rate_by_invproba': top5_hit_rate_by_invproba,
-        'reversal_margin': float(margin),
-        'reversal_warning': is_reversal
+        'top5_n': k5,
+        'top5_hit_proba': top5_proba_hr,
+        'top5_hit_invproba': top5_inv_hr,
+        'top5_gap': float(gap5),
+        'top10_n': k10,
+        'top10_hit_proba': top10_proba_hr,
+        'top10_hit_invproba': top10_inv_hr,
+        'top10_gap': float(gap10),
+        'reversal_warning_top5': warn5,
+        'reversal_warning_top10': warn10,
+        'reversal_warning': final_warning
     }
 
 
@@ -285,21 +304,33 @@ def run_rolling_training(args):
             mean_neg_proba = y_proba_val[mask_neg].mean() if mask_neg.sum() > 0 else 0.0
             
             # Top-K Reversal Check
-            rev_stats = get_sanity_reversal_metrics(y_val, y_proba_val, k_pct=0.05)
+            rev_stats = get_sanity_reversal_metrics(
+                y_val, y_proba_val, 
+                margin_threshold=args.reversal_gap_margin, 
+                use_top10=(args.reversal_use_top10 == 'true')
+            )
+            
             # Combo reversal warning (roc < 0.5 is also strictly bad)
             is_roc_fail = (metrics.get('ROC-AUC') is not None) and (metrics['ROC-AUC'] < 0.5)
             final_reversal_warning = rev_stats['reversal_warning'] or is_roc_fail
             
             print(f"  [Metric] {val_y} ROC-AUC: {metrics.get('ROC-AUC', 'N/A')}")
-            print(f"  [Metric] Top5% Hit Rate by Proba: {rev_stats['top5_hit_rate_by_proba']*100:.1f}%")
-            print(f"  [Metric] Top5% Hit Rate by Inv. : {rev_stats['top5_hit_rate_by_invproba']*100:.1f}%")
+            print(f"  [Metric] Top5% Hit Rate by Proba: {rev_stats['top5_hit_proba']*100:.1f}%")
+            print(f"  [Metric] Top5% Hit Rate by Inv. : {rev_stats['top5_hit_invproba']*100:.1f}%")
+            print(f"  [Metric] Top5% Gap              : {rev_stats['top5_gap']*100:.1f}%")
+            if args.reversal_use_top10 == 'true':
+                 print(f"  [Metric] Top10% Hit Rate by Pro: {rev_stats['top10_hit_proba']*100:.1f}% | Gap: {rev_stats['top10_gap']*100:.1f}%")
+            
             if final_reversal_warning:
-                print(f"  🚨⚠️ [REVERSAL OCURRED IN {val_y}] 模型方向完全錯亂！")
+                print(f"  🚨⚠️ [REVERSAL OCURRED IN {val_y}] 觸發反向警告機制！")
                 
             metrics['Sanity Check'] = {
+                'reversal_rule_version': 'v2',
+                'reversal_gap_margin': args.reversal_gap_margin,
+                'reversal_check_top10': args.reversal_use_top10,
                 'mean_pos_proba': float(mean_pos_proba),
                 'mean_neg_proba': float(mean_neg_proba),
-                'reversal_warning': final_reversal_warning,
+                'reversal_warning_final': final_reversal_warning,
                 **rev_stats
             }
             
@@ -324,7 +355,10 @@ def run_rolling_training(args):
                 'balance_train': args.balance_train,
                 'used_balancing_method': used_balancing_method,
                 'use_regime_features': getattr(args, 'use_regime_features', False),
-                'regime_cols': REGIME_COLS if getattr(args, 'use_regime_features', False) else []
+                'regime_cols': REGIME_COLS if getattr(args, 'use_regime_features', False) else [],
+                'reversal_rule_version': 'v2',
+                'reversal_gap_margin': args.reversal_gap_margin,
+                'reversal_check_top10': args.reversal_use_top10
             }
             
             # --- 收集 Regime Summary (當年市場狀況) ---
@@ -357,11 +391,18 @@ def run_rolling_training(args):
                 'th0.5_precision': metrics.get('Threshold Sweep', {}).get('Threshold=0.5', {}).get('Precision', None),
                 'th0.5_recall': metrics.get('Threshold Sweep', {}).get('Threshold=0.5', {}).get('Recall', None),
                 'th0.5_f1': metrics.get('Threshold Sweep', {}).get('Threshold=0.5', {}).get('F1', None),
-                'top5_n': rev_stats['topk_n_by_year'],
-                'top5_hit_proba': rev_stats['top5_hit_rate_by_proba'],
-                'top5_hit_invproba': rev_stats['top5_hit_rate_by_invproba'],
+                'top5_n': rev_stats['top5_n'],
+                'top5_hit_proba': rev_stats['top5_hit_proba'],
+                'top5_hit_invproba': rev_stats['top5_hit_invproba'],
+                'top5_gap': rev_stats['top5_gap'],
+                'top10_n': rev_stats['top10_n'],
+                'top10_hit_proba': rev_stats['top10_hit_proba'],
+                'top10_hit_invproba': rev_stats['top10_hit_invproba'],
+                'top10_gap': rev_stats['top10_gap'],
                 'mean_pos_proba': mean_pos_proba,
                 'mean_neg_proba': mean_neg_proba,
+                'reversal_warning_top5': rev_stats['reversal_warning_top5'],
+                'reversal_warning_top10': rev_stats['reversal_warning_top10'],
                 'reversal_warning': final_reversal_warning
             }
             # 如果有啟動 Regime，就把那些統計指標塞入 Master
