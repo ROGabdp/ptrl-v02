@@ -114,10 +114,12 @@ def get_sanity_reversal_metrics(y_true, y_proba, margin_threshold=0.10, use_top1
     }
 
 
-def prepare_dataset_for_ticker(ticker, target_days, target_return, use_cache):
+def prepare_dataset_for_ticker(ticker, target_days, target_return, use_cache, all_raw_data=None):
     """取得資料並根據 Target 動態建立 y 標籤，然後回傳完整清理過的 DataFrame"""
     print(f"\n📦 正在準備 {ticker} 的資料集並計算特徵...")
-    all_raw_data = fetch_all_stock_data()
+    if all_raw_data is None:
+        from train_us_tech_buy_agent import fetch_all_stock_data
+        all_raw_data = fetch_all_stock_data()
     
     if ticker not in all_raw_data:
         raise ValueError(f"Ticker {ticker} 無法取得數據")
@@ -193,6 +195,10 @@ def run_rolling_training(args):
     master_summary = []
     use_cache = not getattr(args, 'no_cache', False)
     
+    print("📥 預先載入所有股票的歷史資料 (避免重複 IO)...")
+    from train_us_tech_buy_agent import fetch_all_stock_data
+    all_raw_data = fetch_all_stock_data()
+    
     # 載入 Profiles
     profiles = {}
     if getattr(args, 'profiles_path', None) and os.path.exists(args.profiles_path):
@@ -203,7 +209,7 @@ def run_rolling_training(args):
     for ticker in args.tickers:
         print(f"\n{'='*80}\n🚀 打開 Walk-Forward 引擎: Ticker = {ticker}\n{'='*80}")
         try:
-            df_full, benchmark_df = prepare_dataset_for_ticker(ticker, args.target_days, args.target_return, use_cache)
+            df_full, benchmark_df = prepare_dataset_for_ticker(ticker, args.target_days, args.target_return, use_cache, all_raw_data)
         except Exception as e:
             print(f"❌ 初始化 {ticker} 資料失敗: {e}")
             continue
@@ -243,8 +249,7 @@ def run_rolling_training(args):
             active_feature_cols += REGIME_COLS
             
             if regime_profile == 'bm_plus_stock':
-                from train_us_tech_buy_agent import fetch_all_stock_data
-                raw_df = fetch_all_stock_data()[ticker]
+                raw_df = all_raw_data[ticker]
                 df_stock_regime = compute_stock_regime_features(raw_df, benchmark_df)
                 df_full = pd.merge(df_full, df_stock_regime, left_on='date_str', right_on='date', how='left', suffixes=('', '_stock'))
                 active_feature_cols += STOCK_REGIME_COLS
@@ -363,7 +368,7 @@ def run_rolling_training(args):
             print(f"  [Metric] Top5% Hit Rate by Proba: {rev_stats['top5_hit_proba']*100:.1f}%")
             print(f"  [Metric] Top5% Hit Rate by Inv. : {rev_stats['top5_hit_invproba']*100:.1f}%")
             print(f"  [Metric] Top5% Gap              : {rev_stats['top5_gap']*100:.1f}%")
-            if args.reversal_use_top10 == 'true':
+            if str(reversal_use_top10).lower() == 'true':
                  print(f"  [Metric] Top10% Hit Rate by Pro: {rev_stats['top10_hit_proba']*100:.1f}% | Gap: {rev_stats['top10_gap']*100:.1f}%")
             
             if final_reversal_warning:
