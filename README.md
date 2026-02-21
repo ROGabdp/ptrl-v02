@@ -272,9 +272,24 @@ python scripts/train_rolling_hgb.py --tickers GOOGL --val-years 2019 2020 2021 2
 
 腳本會在 `output_rolling_hgb/` 輸出完整的 `rolling_summary.csv`。此總表不僅能追蹤每年的真實可用樣本邊界，更新增了 **Top 5% Hit Rate by Proba** 比較，若發現反向，將自動觸發 `reversal_warning` 以供後續診斷。
 
-### 4. 自動化網格搜尋 (Window Years Grid)
-
 為了解決手動尋找最穩定 window year 區間的問題，系統提供 `scripts/run_rolling_grid.py` 包裝器，能一次性自動執行多個年份組合並綜合產出大表：
+
+```bash
+# 一次比較 Window_Years 為 3, 5, 7 年的跨年預測穩定性
+python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --target-days 120 --target-return 0.20
+```
+
+#### 進階防禦：自我學習 Regime Feature
+為了讓模型能主動意識到目前所處的市場狀態（如空頭、高波動等）避免在反轉年失效，執行 Rolling Training 可以加上 `--use-regime-features`，會自動將 `src/features/regime_features.py` 內定義的大盤指標 (MA200、年化波動率百分位數、中長線報酬等) 當成特徵餵給模型學習。
+
+```bash
+# 針對 GOOGL 使用前 3 年資料滾動訓練，並且合併 Regime Features
+python scripts/train_rolling_hgb.py --tickers GOOGL --window-years 3 --target-days 120 --target-return 0.20 --use-regime-features
+```
+
+這項開關也會在產出的 `rolling_summary` 報表中新增對應的統計欄位（如該年的高波動佔比），方便事後審查模型決策時的市場環境對應。
+
+### 4. 自動化網格搜尋 (Window Years Grid)
 
 ```bash
 # 一次比較 Window_Years 為 3, 5, 7 年的跨年預測穩定性
@@ -543,7 +558,11 @@ ptrl-v02/
 │   ├── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
 │   ├── predict_today.py            # 日常買點預測推論工具
 │   └── analyze_topk_feature_shifts.py # 特徵翻轉與 Regime Shift 診斷
-├── src/train/sklearn_utils.py      # 共用的 sklearn 指標與類別轉換工具
+├── src/
+│   ├── features/
+│   │   └── regime_features.py      # 萃取大盤狀態 (MA200, HV20) 給模型防禦的函數
+│   └── train/
+│       └── sklearn_utils.py        # 共用的 sklearn 指標與類別轉換工具
 ├── models_v5/                      # 模型儲存
 ├── output_sklearn/                 # sklearn 訓練結果輸出
 ├── output_eval_ppo/                # PPO 離線推論評估輸出

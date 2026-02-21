@@ -14,6 +14,7 @@ if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
 from src.train.sklearn_utils import get_positive_proba, apply_class_balancing, get_model, calc_metrics
+from src.features.regime_features import compute_regime_features, REGIME_COLS
 
 try:
     from train_us_tech_buy_agent import fetch_all_stock_data, calculate_features, FEATURE_COLS, BENCHMARK
@@ -46,6 +47,8 @@ def parse_args():
     parser.add_argument('--balance-train', type=str, default='none', 
                         choices=['none', 'undersample_50_50', 'class_weight_balanced'],
                         help="Train Set 的平衡策略，Val Set 一律不平衡以反映真實分佈")
+    parser.add_argument('--use-regime-features', action='store_true', 
+                        help="是否要合併 Benchmark Regime Features (例如 MA200, HV20) 一起丟給模型評估")
     
     # 工具控制
     parser.add_argument('--no-cache', action='store_true', help="強制重新計算特徵不使用快取")
@@ -115,8 +118,10 @@ def prepare_dataset_for_ticker(ticker, target_days, target_return, use_cache):
     elif 'index' in df_dataset.columns:
         df_dataset.rename(columns={'index': 'date'}, inplace=True)
         
+    df_dataset['date_str'] = pd.to_datetime(df_dataset['date']).dt.strftime('%Y-%m-%d')
     df_dataset['ticker'] = ticker
-    return df_dataset
+    
+    return df_dataset, benchmark_df
 
 
 def extract_val_years(df_dataset, args):
@@ -167,10 +172,27 @@ def run_rolling_training(args):
     for ticker in args.tickers:
         print(f"\n{'='*80}\n🚀 打開 Walk-Forward 引擎: Ticker = {ticker}\n{'='*80}")
         try:
-            df_full = prepare_dataset_for_ticker(ticker, args.target_days, args.target_return, use_cache)
+            df_full, benchmark_df = prepare_dataset_for_ticker(ticker, args.target_days, args.target_return, use_cache)
         except Exception as e:
             print(f"❌ 初始化 {ticker} 資料失敗: {e}")
             continue
+            
+        # 處理 Regime Features 整合
+        active_feature_cols = FEATURE_COLS.copy()
+        if getattr(args, 'use_regime_features', False):
+            print("🧲 啟動 Regime Features (HGB 自研防禦), 準備結合大盤特徵...")
+            df_regime = compute_regime_features(benchmark_df)
+            
+            # 建立 Date Str 以供 Merge
+            if 'date_str' not in df_full.columns:
+                df_full['date_str'] = pd.to_datetime(df_full['date']).dt.strftime('%Y-%m-%d')
+                
+            # 將 df_regime (已經有 date string) Merge 起來
+            df_full = pd.merge(df_full, df_regime, left_on='date_str', right_on='date', how='inner', suffixes=('', '_regime'))
+            # 重新 Dropna 保障新特徵沒有洞 (大盤最前面會有歷史長度的洞)
+            df_full = df_full.dropna(subset=REGIME_COLS).copy()
+            active_feature_cols += REGIME_COLS
+            print(f"   => 合併完成, X 變數從 {len(FEATURE_COLS)} 增長為 {len(active_feature_cols)} 個。")
             
         val_years = extract_val_years(df_full, args)
         if not val_years:
@@ -228,10 +250,10 @@ def run_rolling_training(args):
             
             # 在 Train Set 實施 class balancing (Val Set 絕對不可動)
             df_train_bal = apply_class_balancing(df_train_raw, args.balance_train, args.seed)
-            X_train = df_train_bal[FEATURE_COLS]
+            X_train = df_train_bal[active_feature_cols]
             y_train = df_train_bal['y']
             
-            X_val = df_val[FEATURE_COLS]
+            X_val = df_val[active_feature_cols]
             y_val = df_val['y']
             
             # --- 訓練與推論 ---
@@ -300,8 +322,25 @@ def run_rolling_training(args):
                 'model_class': type(model).__name__,
                 'model_params': model.get_params(),
                 'balance_train': args.balance_train,
-                'used_balancing_method': used_balancing_method
+                'used_balancing_method': used_balancing_method,
+                'use_regime_features': getattr(args, 'use_regime_features', False),
+                'regime_cols': REGIME_COLS if getattr(args, 'use_regime_features', False) else []
             }
+            
+            # --- 收集 Regime Summary (當年市場狀況) ---
+            regime_dict = {}
+            if getattr(args, 'use_regime_features', False):
+                # 統計該年度 (Val Set) 中，這些大盤特徵的表現概況，用來關聯是否造成模型崩壞
+                regime_dict = {
+                    'regime_above_ma200_rate': df_val['REGIME_BM_ABOVE_MA200'].mean(),
+                    'regime_hv20_mean': df_val['REGIME_BM_HV20'].mean(),
+                    'regime_hv20_p50': df_val['REGIME_BM_HV20'].median(),
+                    'regime_hv20_p90': df_val['REGIME_BM_HV20'].quantile(0.90),
+                    'regime_hv20_pctl_mean': df_val['REGIME_BM_HV20_PCTL'].mean(),
+                    'regime_hv20_pctl_p50': df_val['REGIME_BM_HV20_PCTL'].median(),
+                    'regime_ret_120_mean': df_val['REGIME_BM_RET_120'].mean(),
+                    'regime_ret_60_mean': df_val['REGIME_BM_RET_60'].mean(),
+                }
             
             # 準備 Master 這一行的 Data
             row = {
@@ -325,6 +364,9 @@ def run_rolling_training(args):
                 'mean_neg_proba': mean_neg_proba,
                 'reversal_warning': final_reversal_warning
             }
+            # 如果有啟動 Regime，就把那些統計指標塞入 Master
+            row.update(regime_dict)
+            
             master_summary.append(row)
             
             # --- Output 到年份獨立資料夾 ---
