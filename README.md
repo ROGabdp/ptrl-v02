@@ -478,25 +478,33 @@ python scripts/predict_today.py --force-retrain
   - `Normal (正常)`: 當日 Regime 正常。只要今日分數落於自身歷史的 Top 10% 內 (`--topk-threshold-pct 0.90`)，就會標記 **`BUY`** (資金池配給 Position 1.0 倍)。
   - `High Risk (高危)`: 例如「大盤跌破 MA 200 且波動率百分位 > 80%」時。出手機制瞬間嚴格化至 Top 5% (`--risk-threshold-pct 0.95`)。就算有股票成功入圍，也會被標註為 **`BUY_REDUCED`** (資金池配給強制縮為 0.5 倍)；不達標的更會亮起紅燈 **`SKIP_RISK`**。
 
-#### 輸出範例
+### 3. Per-Ticker Best Profile 掛載 (與 Rolling 共用配置)
 
-除了在 Console 印出美觀的報告，腳本更會自動匯出 `predictions.csv` 與 `run_summary.json` 便於後續串接自動下單機。
-
+現在 `predict_today.py` 已經完整支援從 `configs/rolling_profiles.json` 讀取個別 Ticker 的客製化設定：
+```bash
+python scripts/predict_today.py --use-regime-features true --profiles-path configs/rolling_profiles.json
 ```
+- **配置無縫接軌**：不論是 `target_days`, `target_return` 還是 `regime_profile` 與 `hgb_reg_preset`。腳本都能獨立為各股套用與回測 Rolling 時一模一樣的最佳參數，確保「實盤」與「回測」不會發生參數漂移！
+- **透明的模型快取**：模型快取的檔名會自動附加所有特調的 Profile 簽名 (例如 `model_20d_10p_bm_plus_stock_regularized.joblib`)，確保多種維度的報表自動排程互不干擾。
+
+#### 4. 輸出範例
+
+除了在 Console 印出美觀的報告，腳本更會自動匯出帶有 Profile 追蹤欄位的 `predictions.csv` 與 `run_summary.json` 便於後續串接自動下單機。
+
+```text
 📊 今日推論結果 (Single Ticker Approach)
 ----------------------------------------------------------------------------------------
 Ticker   | Latest Date  | Score(p)   | PctRank  | Act Thresh | Action          | Pos Scale
 ----------------------------------------------------------------------------------------
-NVDA     | 2026-02-20   |  99.83%    | 50.4%    | >=0.9      | WATCH           | x0.0
-AAPL     | 2026-02-20   |   0.06%    | 36.1%    | >=0.9      | WATCH           | x0.0
-AMZN     | 2026-02-20   |  99.99%    | 97.6%    | >=0.9      | BUY             | x1.0
-NFLX     | 2026-02-20   |  99.99%    | 98.4%    | >=0.9      | BUY             | x1.0
+NVDA     | 2026-02-20   |  41.60%    | 51.5%    | >=0.9      | WATCH           | x0.0
+GOOGL    | 2026-02-20   |  12.85%    | 48.4%    | >=0.9      | WATCH           | x0.0
+TSM      | 2026-02-20   |  97.45%    | 45.6%    | >=0.9      | WATCH           | x0.0
 ----------------------------------------------------------------------------------------
 📝 報告輸出完成於: output_daily/20260221
 ✅ predictions.csv 與 run_summary.json 已更新檔案
 ```
 
-### 3. 靜態單步推論 (Legacy Mode)
+### 5. 靜態單步推論 (Legacy Mode)
 
 當然，如果您想保留以前的手感，直接拿特定寫死好的 sklearn / PPO 模型來測今天的漲幅預測也是 100% 相容的（不經過分位數計算）：
 
