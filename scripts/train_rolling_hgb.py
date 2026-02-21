@@ -60,6 +60,8 @@ def parse_args():
                         help="是否合併納入 Top 10% 樣本進行反向雙重確認 (預設: true)")
     
     # 工具控制
+    parser.add_argument('--profiles-path', type=str, default=None,
+                        help="Per-ticker 設定檔路徑 (JSON)，若提供則覆寫個別預設參數。")
     parser.add_argument('--no-cache', action='store_true', help="強制重新計算特徵不使用快取")
     parser.add_argument('--dry-run', action='store_true', help="僅輸出設定與切分的邊界與樣本數，不進行訓練")
     
@@ -191,6 +193,13 @@ def run_rolling_training(args):
     master_summary = []
     use_cache = not getattr(args, 'no_cache', False)
     
+    # 載入 Profiles
+    profiles = {}
+    if getattr(args, 'profiles_path', None) and os.path.exists(args.profiles_path):
+        with open(args.profiles_path, 'r', encoding='utf-8') as f:
+            profiles = json.load(f)
+        print(f"📖 成功載入 Per-Ticker Profiles 檔: {args.profiles_path}")
+    
     for ticker in args.tickers:
         print(f"\n{'='*80}\n🚀 打開 Walk-Forward 引擎: Ticker = {ticker}\n{'='*80}")
         try:
@@ -199,29 +208,51 @@ def run_rolling_training(args):
             print(f"❌ 初始化 {ticker} 資料失敗: {e}")
             continue
             
+        # 決定此 Ticker 的 Profile 設定
+        profile = {}
+        profile_name = "cli_args"
+        if profiles:
+            if ticker in profiles:
+                profile = profiles[ticker]
+                profile_name = ticker
+            elif 'default' in profiles:
+                profile = profiles['default']
+                profile_name = "default"
+                
+        if profiles:
+            regime_profile = profile.get('regime_profile', 'none')
+        else:
+            regime_profile = "bm_plus_stock" if getattr(args, 'use_regime_features', False) else "none"
+            
+        hgb_reg_preset = profile.get('hgb_reg_preset', getattr(args, 'hgb_reg_preset', 'default'))
+        reversal_margin = profile.get('reversal_gap_margin', getattr(args, 'reversal_gap_margin', 0.10))
+        reversal_use_top10 = profile.get('reversal_use_top10', getattr(args, 'reversal_use_top10', 'true'))
+        
         # 處理 Regime Features 整合
         active_feature_cols = FEATURE_COLS.copy()
-        if getattr(args, 'use_regime_features', False):
-            print("🧲 啟動 Regime Features (HGB 自研防禦), 準備結合大盤與個股特徵...")
+        if regime_profile in ['bm_only', 'bm_plus_stock']:
+            print(f"🧲 啟動 Regime Features (Profile: {regime_profile}), 準備結合特徵...")
             df_regime = compute_regime_features(benchmark_df)
             
-            # 從原資料借出 raw 算 TSM 特定特徵 (不受 drops 失真影響)
-            from train_us_tech_buy_agent import fetch_all_stock_data
-            raw_df = fetch_all_stock_data()[ticker]
-            df_stock_regime = compute_stock_regime_features(raw_df, benchmark_df)
-            
-            # 建立 Date Str 以供 Merge
             if 'date_str' not in df_full.columns:
                 df_full['date_str'] = pd.to_datetime(df_full['date']).dt.strftime('%Y-%m-%d')
                 
-            # 將 df_regime 與 df_stock_regime Merge 起來
-            df_full = pd.merge(df_full, df_regime, left_on='date_str', right_on='date', how='inner', suffixes=('', '_regime'))
-            df_full = pd.merge(df_full, df_stock_regime, left_on='date_str', right_on='date', how='inner', suffixes=('', '_stock'))
+            orig_len = len(df_full)
+            # 安全合併大盤特徵 (Left)
+            df_full = pd.merge(df_full, df_regime, left_on='date_str', right_on='date', how='left', suffixes=('', '_regime'))
+            active_feature_cols += REGIME_COLS
             
-            # 重新 Dropna 保障新特徵沒有洞 (大盤最前面會有歷史長度的洞)
-            df_full = df_full.dropna(subset=REGIME_COLS + STOCK_REGIME_COLS).copy()
-            active_feature_cols += REGIME_COLS + STOCK_REGIME_COLS
-            print(f"   => 合併完成, X 變數從 {len(FEATURE_COLS)} 增長為 {len(active_feature_cols)} 個。")
+            if regime_profile == 'bm_plus_stock':
+                from train_us_tech_buy_agent import fetch_all_stock_data
+                raw_df = fetch_all_stock_data()[ticker]
+                df_stock_regime = compute_stock_regime_features(raw_df, benchmark_df)
+                df_full = pd.merge(df_full, df_stock_regime, left_on='date_str', right_on='date', how='left', suffixes=('', '_stock'))
+                active_feature_cols += STOCK_REGIME_COLS
+                
+            # 將尚未丟棄任何日期以致於無指標的行距，統一刪除
+            df_full = df_full.dropna(subset=active_feature_cols + ['y']).copy()
+            new_len = len(df_full)
+            print(f"   => 合併完成, X 變數從 {len(FEATURE_COLS)} 增長為 {len(active_feature_cols)} 個。筆數: {orig_len} -> {new_len}")
             
         val_years = extract_val_years(df_full, args)
         if not val_years:
@@ -288,7 +319,7 @@ def run_rolling_training(args):
             # --- 訓練與推論 ---
             model, use_sample_weight = get_model(args.model, args.balance_train, args.seed)
             
-            if getattr(args, 'hgb_reg_preset', 'default') == 'regularized' and type(model).__name__ == 'HistGradientBoostingClassifier':
+            if hgb_reg_preset == 'regularized' and type(model).__name__ == 'HistGradientBoostingClassifier':
                 print("  [Train] 🔧 啟動 HGB 正則化參數 (min_samples_leaf=50, max_depth=3, l2=0.1)")
                 model.set_params(min_samples_leaf=50, max_depth=3, l2_regularization=0.1)
                 
@@ -321,8 +352,8 @@ def run_rolling_training(args):
             # Top-K Reversal Check
             rev_stats = get_sanity_reversal_metrics(
                 y_val, y_proba_val, 
-                margin_threshold=args.reversal_gap_margin, 
-                use_top10=(args.reversal_use_top10 == 'true')
+                margin_threshold=float(reversal_margin), 
+                use_top10=(str(reversal_use_top10).lower() == 'true')
             )
             
             # Reversal warning 僅取決於 TopK Gap (V2 rule)，不再受 roc_auc 影響
@@ -340,8 +371,8 @@ def run_rolling_training(args):
                 
             metrics['Sanity Check'] = {
                 'reversal_rule_version': 'v2',
-                'reversal_gap_margin': args.reversal_gap_margin,
-                'reversal_check_top10': args.reversal_use_top10,
+                'reversal_gap_margin': float(reversal_margin),
+                'reversal_check_top10': str(reversal_use_top10),
                 'mean_pos_proba': float(mean_pos_proba),
                 'mean_neg_proba': float(mean_neg_proba),
                 'reversal_warning_final': final_reversal_warning,
@@ -364,23 +395,23 @@ def run_rolling_training(args):
                 'val_pos_rate': float(va_pos_r),
                 'window_years': args.window_years,
                 'seed': args.seed,
-                'hgb_reg_preset': getattr(args, 'hgb_reg_preset', 'default'),
+                'profile_name': profile_name,
+                'regime_profile_used': regime_profile,
+                'hgb_reg_preset_used': hgb_reg_preset,
                 'model_class': type(model).__name__,
                 'model_params': model.get_params(),
                 'balance_train': args.balance_train,
                 'used_balancing_method': used_balancing_method,
-                'use_regime_features': getattr(args, 'use_regime_features', False),
-                'regime_cols': (REGIME_COLS + STOCK_REGIME_COLS) if getattr(args, 'use_regime_features', False) else [],
+                'regime_cols_added': [c for c in active_feature_cols if c not in FEATURE_COLS],
                 'reversal_rule_version': 'v2',
-                'reversal_gap_margin': args.reversal_gap_margin,
-                'reversal_check_top10': args.reversal_use_top10
+                'reversal_gap_margin': float(reversal_margin),
+                'reversal_check_top10': str(reversal_use_top10)
             }
             
             # --- 收集 Regime Summary (當年市場狀況) ---
             regime_dict = {}
-            if getattr(args, 'use_regime_features', False):
-                # 統計該年度 (Val Set) 中，這些大盤特徵的表現概況，用來關聯是否造成模型崩壞
-                regime_dict = {
+            if regime_profile in ['bm_only', 'bm_plus_stock']:
+                regime_dict.update({
                     'regime_above_ma200_rate': df_val['REGIME_BM_ABOVE_MA200'].mean(),
                     'regime_hv20_mean': df_val['REGIME_BM_HV20'].mean(),
                     'regime_hv20_p50': df_val['REGIME_BM_HV20'].median(),
@@ -389,16 +420,22 @@ def run_rolling_training(args):
                     'regime_hv20_pctl_p50': df_val['REGIME_BM_HV20_PCTL'].median(),
                     'regime_ret_120_mean': df_val['REGIME_BM_RET_120'].mean(),
                     'regime_ret_60_mean': df_val['REGIME_BM_RET_60'].mean(),
+                })
+            if regime_profile == 'bm_plus_stock':
+                regime_dict.update({
                     'stock_hv20_pctl_mean': df_val['REGIME_STOCK_HV20_PCTL'].mean(),
                     'stock_hv20_pctl_p50': df_val['REGIME_STOCK_HV20_PCTL'].median(),
                     'stock_rs120_mean': df_val['REGIME_STOCK_RS120'].mean(),
                     'stock_rs120_p50': df_val['REGIME_STOCK_RS120'].median(),
                     'extreme_dist_rate': df_val['REGIME_EXTREME_DIST_MA240_FLAG'].mean(),
-                }
+                })
             
             # 準備 Master 這一行的 Data
             row = {
                 'ticker': ticker,
+                'profile_name': profile_name,
+                'regime_profile': regime_profile,
+                'hgb_reg_preset': hgb_reg_preset,
                 'val_year': val_y,
                 'window': args.window_years,
                 'train_n': tr_n,

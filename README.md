@@ -318,6 +318,44 @@ python scripts/train_rolling_hgb.py --tickers TSM `
 - 檢查 `reversal_warning` 是否在歷史上的熊市 (如 2019/2022) 成功從 `True` 轉為 `False`。
 - 觀察 `rolling_summary.csv` 中新增的統計欄位（如該年的 `regime_above_ma200_rate` 平均低於 0.5 時，模型的命中率有無穩住），藉此驗收模型是否成功靠大盤特徵避開了不佳市況。
 
+#### 自動化選用 Per-Ticker Best Profile (推薦)
+
+當我們需要對不同性質的標的（例如：相對抗跌的 GOOGL 與相對活潑的 TSM）一次性跑批次驗證時，如果統一套用最強的防禦參數 (`regularized` 與 `bm_plus_stock`)，針對不需要的標的可能會扼殺掉它的預測能力。這時您可以提供一個 JSON 設定檔，腳本在針對每一檔 ticker 進行滾動訓練時，將會動態加載它專屬的最佳設定！
+
+**準備 `configs/rolling_profiles.json` 範例:**
+```json
+{
+    "default": {
+        "regime_profile": "bm_only",
+        "hgb_reg_preset": "default"
+    },
+    "TSM": {
+        "regime_profile": "bm_plus_stock",
+        "hgb_reg_preset": "regularized",
+        "reversal_gap_margin": 0.10,
+        "reversal_use_top10": "true"
+    },
+    "GOOGL": {
+        "regime_profile": "bm_only",
+        "hgb_reg_preset": "default"
+    }
+}
+```
+
+**指令加掛 `--profiles-path` 執行：**
+```powershell
+python scripts/train_rolling_hgb.py --tickers GOOGL TSM AMZN `
+  --window-years 3 --target-days 120 --target-return 0.20 `
+  --use-regime-features --profiles-path configs/rolling_profiles.json `
+  --output-dir output_rolling_mix `
+  --seed 42
+```
+
+如此一來，同一行批次指令內：
+- `GOOGL` 或 `AMZN`（未列於配置者）會採用 `default` 設定：大盤特徵 (`bm_only`) + `default` 模型。
+- `TSM` 會觸發其專屬設定：大盤與個股特徵雙重合併 (`bm_plus_stock`) + `regularized` 過渡防禦模型 + 指定自定義的 reversal margin 門檻。
+- 對應啟用的 `profile_name`、實際使用的 `regime_profile` 與 `hgb_reg_preset_used` 等，將同時被紀錄在輸出的 `params.json` 與總表 `rolling_summary.csv` 之中，以利後續的追蹤除錯。
+
 ### 4. 自動化網格搜尋 (Window Years Grid)
 
 ```bash

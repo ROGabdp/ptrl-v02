@@ -1,0 +1,16 @@
+{
+    "default": {
+        "regime_profile": "bm_only",
+        "hgb_reg_preset": "default"
+    },
+    "TSM": {
+        "regime_profile": "bm_plus_stock",
+        "hgb_reg_preset": "regularized",
+        "reversal_gap_margin": 0.10,
+        "reversal_use_top10": "true"
+    },
+    "GOOGL": {
+        "regime_profile": "bm_only",
+        "hgb_reg_preset": "default"
+    }
+}
