@@ -75,7 +75,8 @@ sensitivity_results/
 output_sklearn/
 output_eval_ppo/
 output_analysis/
-
+output_daily/
+output_rolling_*/
 # =============================================================================
 # OS Generated
 # =============================================================================
