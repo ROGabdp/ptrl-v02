@@ -322,9 +322,39 @@ python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --t
 1. 為每一組 `window_years` 保留獨立的年份預測輸出至 `windows/wX/`
 2. 自動產出 `grid_summary.csv`，列舉各個 `window_years` 的 `mean_roc_auc`、反向發生次數 `reversal_year_count` 以及最糟表現年度，方便一眼選出最抗跌的滑動區間。
 
-### 5. Regime Gate 離線防禦評估
+### 5. 全市場批次驗證與總表 (Batch Rolling & Summary)
 
-在 Rolling 網格搜尋完成後，我們可以使用 `scripts/eval_regime_gate_flip.py` 來進行離線 Regime Gate 驗證。透過大盤 (Benchmark) 特徵判斷市況，將測出為 "Reversal Regime" 時期的預測分數反轉 (`1 - y_proba`)，以此拯救模型在極端反向年（如 2019 或 2022）的預測失靈。
+在跑完基礎的 Rolling 驗證後，我們可以使用 `scripts/run_rolling_all_tickers.py` 批次對所有 10 檔目標科技股啟動滾動測試，並透過 `scripts/summarize_all_tickers.py` 一鍵產出跨股票橫向比較的「最佳實務總表」。這能讓您立刻看出哪些股票在哪個年份最具反轉抵抗力！
+
+#### (1) 執行批次 Rolling 測試
+```bash
+# 對全部的 tickers 以 3 年窗格、120天 20% 目標，開啟大盤防禦進行批次驗證 (支援並行加速)
+python scripts/run_rolling_all_tickers.py \
+  --tickers GOOGL NVDA MSFT AMZN META AVGO NFLX AAPL TSLA PLTR \
+  --output-dir output_rolling_all \
+  --window-years 3 --target-days 120 --target-return 0.20 \
+  --use-regime-features --reversal-gap-margin 0.10 \
+  --val-years 2018 2019 2020 2021 2022 2023 2024 2025 \
+  --max-workers 2 \
+  --seed 42
+```
+這會在 `output_rolling_all/` 底下自動建立各個 Ticker 的專屬資料夾，並寫入該股各自的 `rolling_summary.csv` 與每個年份的 Metrics。
+
+#### (2) 彙整全股票超級總表
+```bash
+# 掃描 output-dir 底下的各股報表，並彙整出指定起訖年份的單張 CSV
+python scripts/summarize_all_tickers.py \
+  --input-dir output_rolling_all \
+  --output-dir output_rolling_all \
+  --years-from 2018 --years-to 2025 \
+  --topk 10 \
+  --sort-by mean_top10_hit_proba
+```
+這會產出終極的 `all_tickers_summary.csv` 大表與 Json，提供包含：`mean_roc_auc`、各股最差年度的 Gap、Top 10 的平均命中率、甚至列舉該股票是否發生 `reversal_year_count_v2`（雙保險反轉警報）等一覽無遺的評比！
+
+### 6. Regime Gate 離線防禦評估
+
+在 Rolling 完成部分實驗後，我們可以使用 `scripts/eval_regime_gate_flip.py` 來進行離線 Regime Gate 驗證。透過大盤 (Benchmark) 特徵判斷市況，將測出為 "Reversal Regime" 時期的預測分數反轉 (`1 - y_proba`)，以此拯救模型在極端反向年（如 2019 或 2022）的預測失靈。
 
 ```bash
 # 對已經跑好的 GOOGL w5 rolling 預測結果進行 Regime Gate 評估 (評估 Top 5% 命中率變化)
@@ -605,7 +635,8 @@ ptrl-v02/
 │   ├── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
 │   ├── train_rolling_hgb.py        # Walk-Forward 滾動時間窗訓練
 │   ├── run_rolling_grid.py         # Window Years 自動網格搜尋與統整
-│   ├── compare_rolling_summaries.py # 自動比對 Baseline vs Regime Rolling 差異
+│   ├── run_rolling_all_tickers.py  # (新增) 全股票批次 Rolling 並行啟動器
+│   ├── summarize_all_tickers.py    # (新增) 掃描收集批次 Rolling 之橫向比較大表
 │   ├── eval_regime_gate_flip.py    # 離線 Regime Gate 預測翻轉評估
 │   ├── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
 │   ├── predict_today.py            # 單檔自動每日即時訓練與風控推論實盤系統
