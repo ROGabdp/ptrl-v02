@@ -272,6 +272,19 @@ python scripts/train_rolling_hgb.py --tickers GOOGL --val-years 2019 2020 2021 2
 
 腳本會在 `output_rolling_hgb/` 輸出完整的 `rolling_summary.csv`。此總表不僅能追蹤每年的真實可用樣本邊界，更新增了 **Top 5% Hit Rate by Proba** 比較，若發現反向，將自動觸發 `reversal_warning` 以供後續診斷。
 
+### 4. 自動化網格搜尋 (Window Years Grid)
+
+為了解決手動尋找最穩定 window year 區間的問題，系統提供 `scripts/run_rolling_grid.py` 包裝器，能一次性自動執行多個年份組合並綜合產出大表：
+
+```bash
+# 一次比較 Window_Years 為 3, 5, 7 年的跨年預測穩定性
+python scripts/run_rolling_grid.py --tickers GOOGL --window-years-list 3 5 7 --target-days 120 --target-return 0.20
+```
+
+腳本會在 `output_rolling_grid/{TICKER}_.../` 目錄內：
+1. 為每一組 `window_years` 保留獨立的年份預測輸出至 `windows/wX/`
+2. 自動產出 `grid_summary.csv`，列舉各個 `window_years` 的 `mean_roc_auc`、反向發生次數 `reversal_year_count` 以及最糟表現年度，方便一眼選出最抗跌的滑動區間。
+
 ---
 
 ## PPO 離線單步推論評估
@@ -514,6 +527,7 @@ ptrl-v02/
 ├── scripts/                        # 獨立分析與訓練工具
 │   ├── train_sklearn_classifier.py # sklearn 二元分類訓練腳本
 │   ├── train_rolling_hgb.py        # Walk-Forward 滾動時間窗訓練
+│   ├── run_rolling_grid.py         # Window Years 自動網格搜尋與統整
 │   ├── eval_ppo_classifier.py      # PPO 離線推論單步評估腳本
 │   ├── predict_today.py            # 日常買點預測推論工具
 │   └── analyze_topk_feature_shifts.py # 特徵翻轉與 Regime Shift 診斷

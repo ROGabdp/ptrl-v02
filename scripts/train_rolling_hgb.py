@@ -141,20 +141,28 @@ def extract_val_years(df_dataset, args):
     return val_years_candidates
 
 
-def main():
-    args = parse_args()
-    np.random.seed(args.seed)
+def run_rolling_training(args):
+    """
+    執行 Walk-Forward 滾動訓練的核心邏輯。
+    可由原本 CLI 的 main() 或外部 wrapper (如 run_rolling_grid.py) 傳入 args 呼叫。
+    回傳值：
+      master_summary (list of dict): 收錄所有年度、所有 ticker 的執行統計指標。
+    """
+    if hasattr(args, 'seed') and args.seed is not None:
+        np.random.seed(args.seed)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"run_{args.model}_{args.target_days}d_{timestamp}"
-    root_output_dir = os.path.join(args.output_dir, run_name)
+    run_name = f"run_hgb_{args.target_days}d_{timestamp}"
+    root_output_dir = args.output_dir
     
-    if not args.dry_run:
+    if getattr(args, 'dry_run', False):
+        pass
+    else:
         os.makedirs(root_output_dir, exist_ok=True)
-        print(f"📁 建立根輸出目錄: {root_output_dir}")
+        print(f"📁 建立輸出目錄: {root_output_dir}")
         
     master_summary = []
-    use_cache = not args.no_cache
+    use_cache = not getattr(args, 'no_cache', False)
     
     for ticker in args.tickers:
         print(f"\n{'='*80}\n🚀 打開 Walk-Forward 引擎: Ticker = {ticker}\n{'='*80}")
@@ -337,8 +345,8 @@ def main():
             df_out.to_csv(os.path.join(year_dir, "val_predictions.csv"), index=False)
             
     # 全局總結與寫檔
-    if not args.dry_run and master_summary:
-        print(f"\n{'='*80}\n✅ 所有 Rolling Epochs 測試完畢，正在產生結算報告...")
+    if not getattr(args, 'dry_run', False) and master_summary:
+        print(f"\n{'='*80}\n✅ 所有 Rolling Epochs 測試完畢，整理結果...")
         df_summary = pd.DataFrame(master_summary)
         csv_path = os.path.join(root_output_dir, "rolling_summary.csv")
         json_path = os.path.join(root_output_dir, "rolling_summary.json")
@@ -347,7 +355,23 @@ def main():
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(master_summary, f, indent=4, ensure_ascii=False)
             
-        print(f"📊 總結報告：{csv_path}")
+        print(f"📊 年度總結報告已寫出：{csv_path}")
+        
+    return master_summary
+
+
+def main():
+    """原本作為獨立 CLI 時的進入點"""
+    args = parse_args()
+    
+    # 單純執行腳本時，自動補上目標目錄的一層 timestamp 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"run_{args.model}_{args.target_days}d_{timestamp}"
+    args.output_dir = os.path.join(args.output_dir, run_name)
+    
+    master_summary = run_rolling_training(args)
+    if not args.dry_run and master_summary:
+        df_summary = pd.DataFrame(master_summary)
         print(df_summary[['val_year', 'val_n', 'val_pos_rate', 'roc_auc', 'precision@5%', 
                           'top5_hit_invproba', 'reversal_warning']].to_string(index=False))
 
